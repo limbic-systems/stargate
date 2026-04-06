@@ -1,0 +1,5 @@
+# Build output
+stargate
+
+# Git worktrees
+.worktrees/
