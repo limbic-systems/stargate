@@ -224,8 +224,7 @@ func walkStmt(ws *walkerState, stmt *syntax.Stmt) {
 			// For pipelines (cmd1 | cmd2 > out), attach to the last stage's
 			// direct command. If the last stage is compound, find the last
 			// direct CallExpr inside it.
-			bc := c
-			stages := collectPipelineStages(bc)
+			stages := collectPipelineStages(c)
 			if len(stages) > 0 {
 				lastStage := stages[len(stages)-1]
 				if ce, ok := lastStage.Cmd.(*syntax.CallExpr); ok {

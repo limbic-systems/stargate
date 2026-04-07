@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -324,26 +325,12 @@ func TestWalkPrefixStripping(t *testing.T) {
 				t.Errorf("expected name=%q, got %q", tt.wantName, cmd.Name)
 			}
 			for _, wf := range tt.wantFlags {
-				found := false
-				for _, f := range cmd.Flags {
-					if f == wf {
-						found = true
-						break
-					}
-				}
-				if !found {
+				if !slices.Contains(cmd.Flags, wf) {
 					t.Errorf("expected flag %q in %v", wf, cmd.Flags)
 				}
 			}
 			for _, wa := range tt.wantArgs {
-				found := false
-				for _, a := range cmd.Args {
-					if a == wa {
-						found = true
-						break
-					}
-				}
-				if !found {
+				if !slices.Contains(cmd.Args, wa) {
 					t.Errorf("expected arg %q in %v", wa, cmd.Args)
 				}
 			}
