@@ -1,5 +1,5 @@
-# Build output
-stargate
+# Build output (root-level binary only)
+/stargate
 
 # Git worktrees
 .worktrees/

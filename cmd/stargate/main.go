@@ -17,14 +17,13 @@ import (
 	"github.com/perezd/stargate/internal/server"
 )
 
-// isLoopbackAddr returns true if addr binds to a loopback interface only.
+// isLoopbackAddr returns true if addr binds to an explicit loopback IP only.
+// Hostnames (including "localhost") are rejected — only literal 127.0.0.0/8
+// and [::1] are accepted to avoid DNS resolution surprises.
 func isLoopbackAddr(addr string) bool {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
 		return false
-	}
-	if host == "localhost" {
-		return true
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
