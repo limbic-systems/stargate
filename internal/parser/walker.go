@@ -3,7 +3,6 @@ package parser
 import (
 	"bytes"
 	"strings"
-	"unicode"
 
 	"github.com/perezd/stargate/internal/config"
 	"github.com/perezd/stargate/internal/rules"
@@ -673,6 +672,41 @@ func resolveCommand(args []*syntax.Word, depth int, wrappers map[string]WrapperD
 	return resolveCommand(rest, depth+1, wrappers)
 }
 
+// isShellAssignment returns true if s looks like a shell variable assignment
+// (NAME=... where NAME is a valid POSIX identifier: [a-zA-Z_][a-zA-Z0-9_]*).
+func isShellAssignment(s string) bool {
+	name, _, ok := strings.Cut(s, "=")
+	if !ok || name == "" {
+		return false
+	}
+	for i, c := range []byte(name) {
+		if i == 0 {
+			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_') {
+				return false
+			}
+		} else {
+			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_') {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// isShellAssignmentWord checks if a syntax.Word looks like a shell variable
+// assignment (NAME=...), handling quoted values like FOO="$bar".
+func isShellAssignmentWord(w *syntax.Word) bool {
+	if len(w.Parts) == 0 {
+		return false
+	}
+	// The first part must be a Lit containing NAME= prefix.
+	lit, ok := w.Parts[0].(*syntax.Lit)
+	if !ok {
+		return false
+	}
+	return isShellAssignment(lit.Value)
+}
+
 // skipWrapperArgs skips flags and special positional tokens for a wrapper command.
 // It handles:
 //   - Boolean flags (value 0 in Flags map)
@@ -681,40 +715,17 @@ func resolveCommand(args []*syntax.Word, depth int, wrappers map[string]WrapperD
 //   - -- terminator
 //   - VAR=val assignments (when ConsumeEnvAssigns is set)
 //   - The first non-flag positional (when ConsumeFirstPositional is set, e.g. timeout duration)
-// isShellAssignment returns true if s looks like a shell variable assignment
-// (NAME=... where NAME is a valid identifier: [a-zA-Z_][a-zA-Z0-9_]*).
-func isShellAssignment(s string) bool {
-	name, _, ok := strings.Cut(s, "=")
-	if !ok || name == "" {
-		return false
-	}
-	for i, r := range name {
-		if i == 0 {
-			if !unicode.IsLetter(r) && r != '_' {
-				return false
-			}
-		} else {
-			if !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' {
-				return false
-			}
-		}
-	}
-	return true
-}
-
 func skipWrapperArgs(args []*syntax.Word, def WrapperDef) []*syntax.Word {
 	firstPositionalConsumed := false
 	endOfOptions := false
 	for len(args) > 0 {
 		lit, ok := wordLiteral(args[0])
 		if !ok {
-			// Non-literal word — still check for env assignments like FOO="$bar"
-			if def.ConsumeEnvAssigns {
-				raw := wordToString(args[0])
-				if isShellAssignment(raw) {
-					args = args[1:]
-					continue
-				}
+			// Non-literal word — check for env assignments like FOO="$bar"
+			// using the AST structure (first part is a Lit with NAME= prefix).
+			if def.ConsumeEnvAssigns && isShellAssignmentWord(args[0]) {
+				args = args[1:]
+				continue
 			}
 			if def.ConsumeFirstPositional && !firstPositionalConsumed {
 				args = args[1:]
