@@ -122,6 +122,11 @@ func TestValidation(t *testing.T) {
 			wantErr: "server.listen",
 		},
 		{
+			name:    "non-loopback server.listen",
+			toml:    "[server]\nlisten = \"0.0.0.0:9099\"",
+			wantErr: "loopback",
+		},
+		{
 			name:    "negative llm.max_tokens",
 			toml:    "[llm]\nmax_tokens = -1",
 			wantErr: "llm.max_tokens",

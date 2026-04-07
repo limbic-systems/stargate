@@ -236,8 +236,13 @@ func (cfg *Config) Validate() error {
 	if cfg.Server.Listen == "" {
 		return fmt.Errorf("config: server.listen is required")
 	}
-	if _, _, err := net.SplitHostPort(cfg.Server.Listen); err != nil {
+	host, _, err := net.SplitHostPort(cfg.Server.Listen)
+	if err != nil {
 		return fmt.Errorf("config: server.listen is not a valid host:port: %w", err)
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || !ip.IsLoopback() {
+		return fmt.Errorf("config: server.listen must bind to a loopback IP (127.0.0.1 or [::1]); got %q", cfg.Server.Listen)
 	}
 	if err := parseDuration("server.timeout", cfg.Server.Timeout); err != nil {
 		return err
