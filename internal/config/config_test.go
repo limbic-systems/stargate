@@ -162,6 +162,11 @@ func TestValidation(t *testing.T) {
 			wantErr: "telemetry.endpoint",
 		},
 		{
+			name:    "invalid telemetry protocol",
+			toml:    "[telemetry]\nprotocol = \"websocket\"",
+			wantErr: "telemetry.protocol",
+		},
+		{
 			name:    "invalid log level",
 			toml:    "[log]\nlevel = \"trace\"",
 			wantErr: "log.level",

@@ -334,6 +334,10 @@ func (cfg *Config) Validate() error {
 	if cfg.Telemetry.Enabled && cfg.Telemetry.Endpoint == "" {
 		return fmt.Errorf("config: telemetry.endpoint is required when telemetry is enabled")
 	}
+	validTelemetryProtocols := map[string]bool{"": true, "http/protobuf": true, "grpc": true}
+	if !validTelemetryProtocols[cfg.Telemetry.Protocol] {
+		return fmt.Errorf("config: telemetry.protocol must be http/protobuf or grpc; got %q", cfg.Telemetry.Protocol)
+	}
 
 	// --- Log ---
 	validLogLevels := map[string]bool{"": true, "debug": true, "info": true, "warn": true, "error": true}
