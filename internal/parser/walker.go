@@ -157,16 +157,23 @@ func walkStmt(ws *walkerState, stmt *syntax.Stmt) {
 	if stmt == nil {
 		return
 	}
-	// Only attach statement-level redirects when the statement's direct Cmd is
-	// a CallExpr. For compound commands (subshells, blocks, if/while), redirects
-	// apply to the compound itself, not to the first nested CallExpr inside.
-	_, isCallExpr := stmt.Cmd.(*syntax.CallExpr)
 	directIdx := len(ws.results)
 	walkCmd(ws, stmt.Cmd)
 
-	if isCallExpr && len(stmt.Redirs) > 0 && directIdx < len(ws.results) {
+	if len(stmt.Redirs) > 0 && directIdx < len(ws.results) {
 		redirs := extractRedirects(stmt.Redirs)
-		ws.results[directIdx].Redirects = append(ws.results[directIdx].Redirects, redirs...)
+		switch stmt.Cmd.(type) {
+		case *syntax.CallExpr:
+			// Attach to the direct command.
+			ws.results[directIdx].Redirects = append(ws.results[directIdx].Redirects, redirs...)
+		case *syntax.BinaryCmd:
+			// For pipelines (cmd1 | cmd2 > out), attach to the last stage.
+			lastIdx := len(ws.results) - 1
+			ws.results[lastIdx].Redirects = append(ws.results[lastIdx].Redirects, redirs...)
+		default:
+			// For other compound commands (subshells, if/while), skip —
+			// redirects apply to the compound, not to nested commands.
+		}
 	}
 }
 
@@ -439,11 +446,10 @@ func resolveCommand(args []*syntax.Word, depth int) (string, []*syntax.Word) {
 }
 
 // skipEnvFlags skips env-specific flags and VAR=val assignments.
+var envNoArgFlags = map[string]bool{"-i": true, "--": true}
+var envTakesArgFlags = map[string]bool{"-u": true, "-S": true}
+
 func skipEnvFlags(args []*syntax.Word) []*syntax.Word {
-	// Flags that take no extra argument.
-	noArgFlags := map[string]bool{"-i": true, "--": true}
-	// Flags that consume the next argument.
-	takesArgFlags := map[string]bool{"-u": true, "-S": true}
 	for len(args) > 0 {
 		lit, ok := wordLiteral(args[0])
 		if !ok {
@@ -453,14 +459,14 @@ func skipEnvFlags(args []*syntax.Word) []*syntax.Word {
 			args = args[1:]
 			break
 		}
-		if takesArgFlags[lit] {
+		if envTakesArgFlags[lit] {
 			args = args[1:] // skip flag
 			if len(args) > 0 {
 				args = args[1:] // skip its argument
 			}
 			continue
 		}
-		if noArgFlags[lit] {
+		if envNoArgFlags[lit] {
 			args = args[1:]
 			continue
 		}
@@ -497,13 +503,13 @@ func skipNiceFlags(args []*syntax.Word) []*syntax.Word {
 	return args
 }
 
+var timeoutTakesArg = map[string]bool{
+	"-k": true, "--kill-after": true,
+	"-s": true, "--signal": true,
+}
+
 // skipTimeoutDuration skips timeout's flags and duration argument.
-// Handles flags that consume arguments: -k/--kill-after, -s/--signal.
 func skipTimeoutDuration(args []*syntax.Word) []*syntax.Word {
-	takesArg := map[string]bool{
-		"-k": true, "--kill-after": true,
-		"-s": true, "--signal": true,
-	}
 	for len(args) > 0 {
 		lit, ok := wordLiteral(args[0])
 		if !ok {
@@ -521,27 +527,26 @@ func skipTimeoutDuration(args []*syntax.Word) []*syntax.Word {
 		}
 		args = args[1:]
 		// If this flag consumes an argument and wasn't --flag=value, skip next.
-		if takesArg[flagName] && !strings.Contains(lit, "=") && len(args) > 0 {
+		if timeoutTakesArg[flagName] && !strings.Contains(lit, "=") && len(args) > 0 {
 			args = args[1:]
 		}
 	}
 	return args
 }
 
+var sudoTakesArg = map[string]bool{
+	"-u": true, "-g": true, "-c": true, "-D": true,
+	"-r": true, "-t": true, "-T": true, "-U": true,
+}
+var sudoNoArg = map[string]bool{
+	"-h": true, "-i": true, "-s": true, "-l": true, "-v": true,
+	"-k": true, "-K": true, "-n": true, "-b": true,
+	"-e": true, "-A": true, "-S": true, "-H": true,
+	"-P": true,
+}
+
 // skipSudoFlags skips sudo's flags before the command.
 func skipSudoFlags(args []*syntax.Word) []*syntax.Word {
-	// Flags that consume the next argument.
-	takesArg := map[string]bool{
-		"-u": true, "-g": true, "-c": true, "-D": true,
-		"-r": true, "-t": true, "-T": true, "-U": true,
-	}
-	// Flags that take no extra argument.
-	noArg := map[string]bool{
-		"-h": true, "-i": true, "-s": true, "-l": true, "-v": true,
-		"-k": true, "-K": true, "-n": true, "-b": true,
-		"-e": true, "-A": true, "-S": true, "-H": true,
-		"-P": true,
-	}
 	for len(args) > 0 {
 		lit, ok := wordLiteral(args[0])
 		if !ok {
@@ -551,11 +556,11 @@ func skipSudoFlags(args []*syntax.Word) []*syntax.Word {
 			args = args[1:]
 			break
 		}
-		if noArg[lit] {
+		if sudoNoArg[lit] {
 			args = args[1:]
 			continue
 		}
-		if takesArg[lit] {
+		if sudoTakesArg[lit] {
 			args = args[1:] // skip flag
 			if len(args) > 0 {
 				args = args[1:] // skip its argument

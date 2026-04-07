@@ -554,6 +554,35 @@ func TestWalkRedirectsNotAttachedToSubstitutionCommands(t *testing.T) {
 	}
 }
 
+func TestWalkPipelineRedirectAttachedToLastStage(t *testing.T) {
+	// "cmd1 | cmd2 > out.txt" — the redirect belongs to cmd2 (last pipeline stage).
+	infos, err := ParseAndWalk("cmd1 | cmd2 > out.txt", "bash")
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	if len(infos) < 2 {
+		t.Fatalf("expected 2 commands, got %d", len(infos))
+	}
+	cmd1Idx, cmd2Idx := -1, -1
+	for i, info := range infos {
+		switch info.Name {
+		case "cmd1":
+			cmd1Idx = i
+		case "cmd2":
+			cmd2Idx = i
+		}
+	}
+	if cmd1Idx < 0 || cmd2Idx < 0 {
+		t.Fatalf("expected cmd1 and cmd2, got %+v", infos)
+	}
+	if len(infos[cmd1Idx].Redirects) != 0 {
+		t.Errorf("cmd1: expected 0 redirects, got %d", len(infos[cmd1Idx].Redirects))
+	}
+	if len(infos[cmd2Idx].Redirects) != 1 {
+		t.Errorf("cmd2: expected 1 redirect (> out.txt), got %d", len(infos[cmd2Idx].Redirects))
+	}
+}
+
 // ---- End of options ----
 
 func TestWalkEndOfOptions(t *testing.T) {
