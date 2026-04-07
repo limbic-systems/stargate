@@ -24,13 +24,12 @@ var prefixCommands = map[string]bool{
 	"timeout": true,
 }
 
-// printer is a package-level printer for converting syntax.Word to strings.
-var printer = syntax.NewPrinter()
-
 // wordToString converts a syntax.Word to its string representation.
+// Creates a new printer per call to be safe for concurrent use.
 func wordToString(w *syntax.Word) string {
 	var buf bytes.Buffer
-	_ = printer.Print(&buf, w)
+	p := syntax.NewPrinter()
+	_ = p.Print(&buf, w)
 	return buf.String()
 }
 
@@ -164,8 +163,12 @@ func walkStmt(ws *walkerState, stmt *syntax.Stmt) {
 		redirs := extractRedirects(stmt.Redirs)
 		switch stmt.Cmd.(type) {
 		case *syntax.CallExpr:
-			// Attach to the direct command.
-			ws.results[directIdx].Redirects = append(ws.results[directIdx].Redirects, redirs...)
+			// Attach to the direct command, but only if extractCallExpr actually
+			// appended a CommandInfo (it won't for assignment-only stmts like FOO=bar).
+			ce := stmt.Cmd.(*syntax.CallExpr)
+			if directIdx < len(ws.results) && ws.results[directIdx].RawNode == ce {
+				ws.results[directIdx].Redirects = append(ws.results[directIdx].Redirects, redirs...)
+			}
 		case *syntax.BinaryCmd:
 			// For pipelines (cmd1 | cmd2 > out), attach to the last stage.
 			lastIdx := len(ws.results) - 1
@@ -390,8 +393,11 @@ func extractEnv(assigns []*syntax.Assign) map[string]string {
 		key := a.Name.Value
 		val := ""
 		if a.Value != nil {
-			lit, _ := wordLiteral(a.Value)
-			val = lit
+			if lit, ok := wordLiteral(a.Value); ok {
+				val = lit
+			} else {
+				val = wordToString(a.Value)
+			}
 		}
 		env[key] = val
 	}
