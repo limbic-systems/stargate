@@ -213,25 +213,42 @@ func walkStmt(ws *walkerState, stmt *syntax.Stmt) {
 			}
 		case *syntax.BinaryCmd:
 			// For pipelines (cmd1 | cmd2 > out), attach to the last stage's
-			// direct command — but only if the last stage is a simple CallExpr.
-			// Compound last stages (subshells, if/while) own their redirects.
+			// direct command. If the last stage is compound, find the last
+			// direct CallExpr inside it.
 			bc := stmt.Cmd.(*syntax.BinaryCmd)
 			stages := collectPipelineStages(bc)
 			if len(stages) > 0 {
 				lastStage := stages[len(stages)-1]
 				if ce, ok := lastStage.Cmd.(*syntax.CallExpr); ok {
-					// Find the CommandInfo for this specific CallExpr.
 					for i := len(ws.results) - 1; i >= directIdx; i-- {
 						if ws.results[i].RawNode == ce {
 							ws.results[i].Redirects = append(ws.results[i].Redirects, redirs...)
 							break
 						}
 					}
+				} else {
+					// Compound last stage — find last direct CallExpr inside.
+					for i := len(ws.results) - 1; i >= directIdx; i-- {
+						r := &ws.results[i]
+						if r.RawNode != nil && !r.Context.InSubstitution {
+							r.Redirects = append(r.Redirects, redirs...)
+							break
+						}
+					}
 				}
 			}
 		default:
-			// For other compound commands (subshells, if/while), skip —
-			// redirects apply to the compound, not to nested commands.
+			// For compound commands (subshells, blocks, if/while), propagate
+			// redirects to the last direct (non-substitution) CallExpr inside,
+			// since the redirect affects the compound's I/O which flows through
+			// its contained commands.
+			for i := len(ws.results) - 1; i >= directIdx; i-- {
+				r := &ws.results[i]
+				if r.RawNode != nil && !r.Context.InSubstitution {
+					r.Redirects = append(r.Redirects, redirs...)
+					break
+				}
+			}
 		}
 	}
 }

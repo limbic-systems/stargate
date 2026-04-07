@@ -635,6 +635,81 @@ func TestWalkPipelineRedirectNotAttachedToSubstitution(t *testing.T) {
 	}
 }
 
+func TestWalkCompoundRedirectSubshell(t *testing.T) {
+	// "(cmd) > out" — redirect propagated to cmd inside subshell.
+	infos, err := ParseAndWalk("(cmd) > out", "bash", nil)
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	if len(infos) == 0 {
+		t.Fatal("expected at least 1 command")
+	}
+	found := false
+	for _, info := range infos {
+		if info.Name == "cmd" {
+			found = true
+			if len(info.Redirects) != 1 {
+				t.Errorf("cmd: expected 1 redirect, got %d", len(info.Redirects))
+			}
+		}
+	}
+	if !found {
+		t.Fatal("expected to find 'cmd'")
+	}
+}
+
+func TestWalkCompoundRedirectBlock(t *testing.T) {
+	// "{ cmd1; cmd2; } > out" — redirect propagated to last command (cmd2).
+	infos, err := ParseAndWalk("{ cmd1; cmd2; } > out", "bash", nil)
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	cmd1Idx, cmd2Idx := -1, -1
+	for i, info := range infos {
+		switch info.Name {
+		case "cmd1":
+			cmd1Idx = i
+		case "cmd2":
+			cmd2Idx = i
+		}
+	}
+	if cmd1Idx < 0 || cmd2Idx < 0 {
+		t.Fatal("expected cmd1 and cmd2")
+	}
+	if len(infos[cmd1Idx].Redirects) != 0 {
+		t.Errorf("cmd1: expected 0 redirects, got %d", len(infos[cmd1Idx].Redirects))
+	}
+	if len(infos[cmd2Idx].Redirects) != 1 {
+		t.Errorf("cmd2: expected 1 redirect, got %d", len(infos[cmd2Idx].Redirects))
+	}
+}
+
+func TestWalkPipelineCompoundLastStageRedirect(t *testing.T) {
+	// "cmd1 | (cmd2) > out" — redirect propagated to cmd2 inside subshell.
+	infos, err := ParseAndWalk("cmd1 | (cmd2) > out", "bash", nil)
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	cmd1Idx, cmd2Idx := -1, -1
+	for i, info := range infos {
+		switch info.Name {
+		case "cmd1":
+			cmd1Idx = i
+		case "cmd2":
+			cmd2Idx = i
+		}
+	}
+	if cmd1Idx < 0 || cmd2Idx < 0 {
+		t.Fatal("expected cmd1 and cmd2")
+	}
+	if len(infos[cmd1Idx].Redirects) != 0 {
+		t.Errorf("cmd1: expected 0 redirects, got %d", len(infos[cmd1Idx].Redirects))
+	}
+	if len(infos[cmd2Idx].Redirects) != 1 {
+		t.Errorf("cmd2: expected 1 redirect (propagated from compound), got %d", len(infos[cmd2Idx].Redirects))
+	}
+}
+
 // ---- End of options ----
 
 func TestWalkEndOfOptions(t *testing.T) {
