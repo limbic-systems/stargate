@@ -160,12 +160,15 @@ type walkerState struct {
 
 // currentContext builds a CommandContext from the walker's current state.
 func (ws *walkerState) currentContext() rules.CommandContext {
+	inSubst := ws.substDepth > 0
 	ctx := rules.CommandContext{
 		SubshellDepth:  ws.subshellDepth,
-		InSubstitution: ws.substDepth > 0,
+		InSubstitution: inSubst,
 		InCondition:    ws.conditionDepth > 0,
 	}
-	if len(ws.pipelineStack) > 0 {
+	// Commands inside substitutions ($(), <(), >()) run in their own
+	// execution context — they don't inherit the outer pipeline position.
+	if !inSubst && len(ws.pipelineStack) > 0 {
 		ctx.PipelinePosition = ws.pipelineStack[len(ws.pipelineStack)-1]
 	}
 	if len(ws.funcStack) > 0 {
@@ -180,6 +183,9 @@ func (ws *walkerState) currentContext() rules.CommandContext {
 // Walk traverses a parsed AST and extracts all command invocations.
 // If cfg is nil, DefaultWalkerConfig() is used.
 func Walk(file *syntax.File, cfg *WalkerConfig) []rules.CommandInfo {
+	if file == nil {
+		return nil
+	}
 	if cfg == nil {
 		cfg = DefaultWalkerConfig()
 	}
@@ -243,14 +249,13 @@ func walkStmt(ws *walkerState, stmt *syntax.Stmt) {
 			}
 		default:
 			// For compound commands (subshells, blocks, if/while), propagate
-			// redirects to the last direct (non-substitution) CallExpr inside,
-			// since the redirect affects the compound's I/O which flows through
-			// its contained commands.
-			for i := len(ws.results) - 1; i >= directIdx; i-- {
+			// redirects to ALL direct (non-substitution) commands inside,
+			// since the redirect affects the compound's I/O for all contained
+			// commands.
+			for i := directIdx; i < len(ws.results); i++ {
 				r := &ws.results[i]
 				if r.RawNode != nil && !r.Context.InSubstitution {
 					r.Redirects = append(r.Redirects, redirs...)
-					break
 				}
 			}
 		}
@@ -483,7 +488,7 @@ func (ws *walkerState) extractCallExpr(ce *syntax.CallExpr) {
 	}
 
 	env := extractEnv(ce.Assigns)
-	name, remainingArgs := resolveCommand(ce.Args, 0, ws.cfg.Wrappers)
+	name, remainingArgs, lookupMode := resolveCommand(ce.Args, 0, ws.cfg.Wrappers)
 
 	var flags, positional []string
 	var subcommand string
@@ -499,6 +504,11 @@ func (ws *walkerState) extractCallExpr(ce *syntax.CallExpr) {
 		}
 	} else {
 		flags, positional, subcommand = classifyArgs(name, remainingArgs, ws.cfg.CommandFlags)
+		if lookupMode {
+			// Lookup wrappers (e.g., "command -v foo") aren't executing —
+			// don't promote args to subcommand as it would trip subcommand rules.
+			subcommand = ""
+		}
 	}
 
 	ctx := ws.currentContext()
@@ -542,12 +552,15 @@ func extractEnv(assigns []*syntax.Assign) map[string]string {
 
 // resolveCommand strips prefix wrapper commands from args and returns the
 // resolved command name and remaining argument words. depth limits recursion.
-func resolveCommand(args []*syntax.Word, depth int, wrappers map[string]WrapperDef) (string, []*syntax.Word) {
+// resolveCommand resolves the actual command name by stripping wrapper prefixes.
+// Returns the command name, remaining args, and whether the command is in
+// "lookup mode" (e.g., "command -v foo" — not executing, just querying).
+func resolveCommand(args []*syntax.Word, depth int, wrappers map[string]WrapperDef) (name string, remaining []*syntax.Word, lookupMode bool) {
 	if depth >= maxWrapperDepth {
-		return "", args
+		return "", args, false
 	}
 	if len(args) == 0 {
-		return "", nil
+		return "", nil, false
 	}
 
 	cmdWord := args[0]
@@ -556,29 +569,30 @@ func resolveCommand(args []*syntax.Word, depth int, wrappers map[string]WrapperD
 	// Check for unresolvable dynamic command names.
 	// Return full args so the command token is preserved in positional args.
 	if isUnresolvable(cmdWord) {
-		return "", args
+		return "", args, false
 	}
 
 	// Check for brace expansion evasion.
 	if isBraceExpansion(cmdWord) {
-		return "", args
+		return "", args, false
 	}
 
 	lit, ok := wordLiteral(cmdWord)
 	if !ok {
-		return "", args
+		return "", args, false
 	}
 
 	wrapper, isWrapper := wrappers[lit]
 	if !isWrapper {
-		return lit, rest
+		return lit, rest, false
 	}
 
 	// Check NoStrip flags — if the first arg matches, don't strip this wrapper.
+	// This is a lookup/query mode (e.g., "command -v foo").
 	for _, ns := range wrapper.NoStrip {
 		if len(rest) > 0 {
 			if first, ok := wordLiteral(rest[0]); ok && first == ns {
-				return lit, rest
+				return lit, rest, true
 			}
 		}
 	}

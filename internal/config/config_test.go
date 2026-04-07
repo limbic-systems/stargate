@@ -207,6 +207,11 @@ func TestValidation(t *testing.T) {
 			wantErr: "duplicate command",
 		},
 		{
+			name:    "commands negative flag arg count",
+			toml:    "[[commands]]\ncommand = \"git\"\n[commands.flags]\n\"--author\" = -1",
+			wantErr: "arg count must be non-negative",
+		},
+		{
 			name:    "telemetry enabled without endpoint",
 			toml:    "[telemetry]\nenabled = true\nendpoint = \"\"",
 			wantErr: "telemetry.endpoint",

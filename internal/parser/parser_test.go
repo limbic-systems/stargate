@@ -659,7 +659,7 @@ func TestWalkCompoundRedirectSubshell(t *testing.T) {
 }
 
 func TestWalkCompoundRedirectBlock(t *testing.T) {
-	// "{ cmd1; cmd2; } > out" — redirect propagated to last command (cmd2).
+	// "{ cmd1; cmd2; } > out" — redirect propagated to ALL direct commands.
 	infos, err := ParseAndWalk("{ cmd1; cmd2; } > out", "bash", nil)
 	if err != nil {
 		t.Fatalf("error: %v", err)
@@ -676,8 +676,8 @@ func TestWalkCompoundRedirectBlock(t *testing.T) {
 	if cmd1Idx < 0 || cmd2Idx < 0 {
 		t.Fatal("expected cmd1 and cmd2")
 	}
-	if len(infos[cmd1Idx].Redirects) != 0 {
-		t.Errorf("cmd1: expected 0 redirects, got %d", len(infos[cmd1Idx].Redirects))
+	if len(infos[cmd1Idx].Redirects) != 1 {
+		t.Errorf("cmd1: expected 1 redirect (compound applies to all), got %d", len(infos[cmd1Idx].Redirects))
 	}
 	if len(infos[cmd2Idx].Redirects) != 1 {
 		t.Errorf("cmd2: expected 1 redirect, got %d", len(infos[cmd2Idx].Redirects))
@@ -937,6 +937,7 @@ func TestWalkWatchWithInterval(t *testing.T) {
 
 func TestWalkCommandDashV(t *testing.T) {
 	// "command -v foo" is a lookup, not execution — should not strip.
+	// Subcommand should be empty (lookup mode, not executing foo).
 	infos, err := ParseAndWalk("command -v foo", "bash", nil)
 	if err != nil {
 		t.Fatalf("error: %v", err)
@@ -946,6 +947,9 @@ func TestWalkCommandDashV(t *testing.T) {
 	}
 	if infos[0].Name != "command" {
 		t.Errorf("expected name=command (lookup mode), got %q", infos[0].Name)
+	}
+	if infos[0].Subcommand != "" {
+		t.Errorf("expected empty Subcommand in lookup mode, got %q", infos[0].Subcommand)
 	}
 }
 
