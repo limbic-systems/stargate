@@ -50,7 +50,7 @@ func TestParseDialects(t *testing.T) {
 // ---- Basic Walk tests ----
 
 func TestWalkSimpleCommand(t *testing.T) {
-	infos, err := ParseAndWalk("git status", "bash")
+	infos, err := ParseAndWalk("git status", "bash", nil)
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}
@@ -66,7 +66,7 @@ func TestWalkSimpleCommand(t *testing.T) {
 }
 
 func TestWalkMultipleArgs(t *testing.T) {
-	infos, err := ParseAndWalk("ls -la /tmp", "bash")
+	infos, err := ParseAndWalk("ls -la /tmp", "bash", nil)
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestWalkMultipleArgs(t *testing.T) {
 }
 
 func TestWalkPipeline(t *testing.T) {
-	infos, err := ParseAndWalk("cat f | grep foo | wc -l", "bash")
+	infos, err := ParseAndWalk("cat f | grep foo | wc -l", "bash", nil)
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}
@@ -112,7 +112,7 @@ func TestWalkPipeline(t *testing.T) {
 }
 
 func TestWalkLogicalOps(t *testing.T) {
-	infos, err := ParseAndWalk("cmd1 && cmd2 || cmd3", "bash")
+	infos, err := ParseAndWalk("cmd1 && cmd2 || cmd3", "bash", nil)
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}
@@ -128,7 +128,7 @@ func TestWalkLogicalOps(t *testing.T) {
 }
 
 func TestWalkSemicolon(t *testing.T) {
-	infos, err := ParseAndWalk("cmd1; cmd2", "bash")
+	infos, err := ParseAndWalk("cmd1; cmd2", "bash", nil)
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}
@@ -146,7 +146,7 @@ func TestWalkSemicolon(t *testing.T) {
 // ---- Flag extraction ----
 
 func TestWalkFlagExtraction(t *testing.T) {
-	infos, err := ParseAndWalk("rm -rf /tmp", "bash")
+	infos, err := ParseAndWalk("rm -rf /tmp", "bash", nil)
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}
@@ -166,7 +166,7 @@ func TestWalkFlagExtraction(t *testing.T) {
 }
 
 func TestWalkLongFlags(t *testing.T) {
-	infos, err := ParseAndWalk("curl --silent --output f url", "bash")
+	infos, err := ParseAndWalk("curl --silent --output f url", "bash", nil)
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}
@@ -192,7 +192,7 @@ func TestWalkLongFlags(t *testing.T) {
 // ---- Environment variables ----
 
 func TestWalkInlineEnv(t *testing.T) {
-	infos, err := ParseAndWalk("FOO=bar BAZ=qux cmd", "bash")
+	infos, err := ParseAndWalk("FOO=bar BAZ=qux cmd", "bash", nil)
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}
@@ -311,7 +311,7 @@ func TestWalkPrefixStripping(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			infos, err := ParseAndWalk(tt.input, "bash")
+			infos, err := ParseAndWalk(tt.input, "bash", nil)
 			if err != nil {
 				t.Fatalf("error: %v", err)
 			}
@@ -354,7 +354,7 @@ func TestWalkPrefixStripping(t *testing.T) {
 func TestWalkPrefixDepthLimit(t *testing.T) {
 	// Build 20 nested "command " prefixes.
 	input := strings.Repeat("command ", 20) + "rm"
-	infos, err := ParseAndWalk(input, "bash")
+	infos, err := ParseAndWalk(input, "bash", nil)
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}
@@ -370,7 +370,7 @@ func TestWalkPrefixDepthLimit(t *testing.T) {
 // ---- Evasion detection ----
 
 func TestWalkUnresolvableVar(t *testing.T) {
-	infos, err := ParseAndWalk("$CMD arg", "bash")
+	infos, err := ParseAndWalk("$CMD arg", "bash", nil)
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}
@@ -392,7 +392,7 @@ func TestWalkBraceExpansion(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			infos, err := ParseAndWalk(tc.cmd, "bash")
+			infos, err := ParseAndWalk(tc.cmd, "bash", nil)
 			if err != nil {
 				t.Fatalf("error: %v", err)
 			}
@@ -408,7 +408,7 @@ func TestWalkBraceExpansion(t *testing.T) {
 
 func TestWalkCommandSubstitution(t *testing.T) {
 	// $(echo rm) as command name → unresolvable outer command.
-	infos, err := ParseAndWalk("$(echo rm) arg", "bash")
+	infos, err := ParseAndWalk("$(echo rm) arg", "bash", nil)
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}
@@ -423,7 +423,7 @@ func TestWalkCommandSubstitution(t *testing.T) {
 
 func TestWalkNestedSubstitution(t *testing.T) {
 	// echo $(rm -rf /) — should find both "echo" and "rm" inside $().
-	infos, err := ParseAndWalk("echo $(rm -rf /)", "bash")
+	infos, err := ParseAndWalk("echo $(rm -rf /)", "bash", nil)
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}
@@ -452,7 +452,7 @@ func TestWalkNestedSubstitution(t *testing.T) {
 
 func TestWalkQuotingEvasion(t *testing.T) {
 	// 'rm' -rf / — single quotes around the command name, parser resolves it.
-	infos, err := ParseAndWalk("'rm' -rf /", "bash")
+	infos, err := ParseAndWalk("'rm' -rf /", "bash", nil)
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}
@@ -467,7 +467,7 @@ func TestWalkQuotingEvasion(t *testing.T) {
 // ---- Subshell ----
 
 func TestWalkSubshell(t *testing.T) {
-	infos, err := ParseAndWalk("(cmd1; cmd2)", "bash")
+	infos, err := ParseAndWalk("(cmd1; cmd2)", "bash", nil)
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}
@@ -483,7 +483,7 @@ func TestWalkSubshell(t *testing.T) {
 
 func TestWalkNestedSubshell(t *testing.T) {
 	// Note: ((cmd)) is arithmetic syntax in bash; use "( (cmd) )" for nested subshells.
-	infos, err := ParseAndWalk("( (cmd) )", "bash")
+	infos, err := ParseAndWalk("( (cmd) )", "bash", nil)
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}
@@ -516,7 +516,7 @@ func TestWalkNestedSubshell(t *testing.T) {
 // ---- Redirections ----
 
 func TestWalkRedirects(t *testing.T) {
-	infos, err := ParseAndWalk("echo foo > out.txt 2>/dev/null", "bash")
+	infos, err := ParseAndWalk("echo foo > out.txt 2>/dev/null", "bash", nil)
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}
@@ -545,7 +545,7 @@ func TestWalkRedirects(t *testing.T) {
 
 func TestWalkRedirectsNotAttachedToSubstitutionCommands(t *testing.T) {
 	// echo $(cat file) > out.txt — the redirect belongs to echo, not cat.
-	infos, err := ParseAndWalk("echo $(cat file) > out.txt", "bash")
+	infos, err := ParseAndWalk("echo $(cat file) > out.txt", "bash", nil)
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}
@@ -579,7 +579,7 @@ func TestWalkRedirectsNotAttachedToSubstitutionCommands(t *testing.T) {
 
 func TestWalkPipelineRedirectAttachedToLastStage(t *testing.T) {
 	// "cmd1 | cmd2 > out.txt" — the redirect belongs to cmd2 (last pipeline stage).
-	infos, err := ParseAndWalk("cmd1 | cmd2 > out.txt", "bash")
+	infos, err := ParseAndWalk("cmd1 | cmd2 > out.txt", "bash", nil)
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}
@@ -608,7 +608,7 @@ func TestWalkPipelineRedirectAttachedToLastStage(t *testing.T) {
 
 func TestWalkPipelineRedirectNotAttachedToSubstitution(t *testing.T) {
 	// "cmd1 | echo $(cat f) > out" — redirect belongs to echo, not cat inside $().
-	infos, err := ParseAndWalk("cmd1 | echo $(cat f) > out", "bash")
+	infos, err := ParseAndWalk("cmd1 | echo $(cat f) > out", "bash", nil)
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}
@@ -639,7 +639,7 @@ func TestWalkPipelineRedirectNotAttachedToSubstitution(t *testing.T) {
 
 func TestWalkEndOfOptions(t *testing.T) {
 	// "git -- status" → status is a positional arg after --, NOT a subcommand.
-	infos, err := ParseAndWalk("git -- status", "bash")
+	infos, err := ParseAndWalk("git -- status", "bash", nil)
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}
@@ -669,7 +669,7 @@ func TestWalkEndOfOptions(t *testing.T) {
 
 func TestWalkFunctionBody(t *testing.T) {
 	// f() { rm -rf /; } → finds "rm" inside function body with InFunction="f".
-	infos, err := ParseAndWalk("f() { rm -rf /; }", "bash")
+	infos, err := ParseAndWalk("f() { rm -rf /; }", "bash", nil)
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}
@@ -692,7 +692,7 @@ func TestWalkFunctionBody(t *testing.T) {
 
 func TestWalkInCondition(t *testing.T) {
 	// if cmd1; then cmd2; fi — cmd1 is in the condition, cmd2 is in the body.
-	infos, err := ParseAndWalk("if cmd1; then cmd2; fi", "bash")
+	infos, err := ParseAndWalk("if cmd1; then cmd2; fi", "bash", nil)
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}
@@ -725,7 +725,7 @@ func TestWalkInCondition(t *testing.T) {
 // ---- ParseAndWalk convenience ----
 
 func TestParseAndWalkReturnsError(t *testing.T) {
-	_, err := ParseAndWalk("echo 'unterminated", "bash")
+	_, err := ParseAndWalk("echo 'unterminated", "bash", nil)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -734,7 +734,7 @@ func TestParseAndWalkReturnsError(t *testing.T) {
 // ---- RawNode ----
 
 func TestWalkRawNodeSet(t *testing.T) {
-	infos, err := ParseAndWalk("ls -la", "bash")
+	infos, err := ParseAndWalk("ls -la", "bash", nil)
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}
@@ -750,7 +750,7 @@ func TestWalkRawNodeSet(t *testing.T) {
 
 func TestWalkEnvPrefixWithFlags(t *testing.T) {
 	// env -i FOO=bar ls → strips -i and FOO=bar, finds ls.
-	infos, err := ParseAndWalk("env -i FOO=bar ls", "bash")
+	infos, err := ParseAndWalk("env -i FOO=bar ls", "bash", nil)
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}
@@ -764,7 +764,7 @@ func TestWalkEnvPrefixWithFlags(t *testing.T) {
 
 func TestWalkGlobalFlagArgsNotInArgs(t *testing.T) {
 	// "git -C /tmp status" — /tmp is consumed by -C, should not appear in Args.
-	infos, err := ParseAndWalk("git -C /tmp status", "bash")
+	infos, err := ParseAndWalk("git -C /tmp status", "bash", nil)
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}
@@ -780,7 +780,7 @@ func TestWalkGlobalFlagArgsNotInArgs(t *testing.T) {
 
 func TestWalkTimeoutWithKillFlag(t *testing.T) {
 	// "timeout -k 5s 10s cmd" — -k consumes 5s, 10s is the duration, cmd is the command.
-	infos, err := ParseAndWalk("timeout -k 5s 10s cmd", "bash")
+	infos, err := ParseAndWalk("timeout -k 5s 10s cmd", "bash", nil)
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}
@@ -812,7 +812,7 @@ func TestWalkSubcommandGlobalFlagSkipping(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.cmd, func(t *testing.T) {
-			infos, err := ParseAndWalk(tc.cmd, "bash")
+			infos, err := ParseAndWalk(tc.cmd, "bash", nil)
 			if err != nil {
 				t.Fatalf("error: %v", err)
 			}
@@ -828,7 +828,7 @@ func TestWalkSubcommandGlobalFlagSkipping(t *testing.T) {
 
 func TestWalkWatchWithInterval(t *testing.T) {
 	// "watch -n 2 ls" — -n consumes 2, command is ls.
-	infos, err := ParseAndWalk("watch -n 2 ls", "bash")
+	infos, err := ParseAndWalk("watch -n 2 ls", "bash", nil)
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}
@@ -842,7 +842,7 @@ func TestWalkWatchWithInterval(t *testing.T) {
 
 func TestWalkCommandDashV(t *testing.T) {
 	// "command -v foo" is a lookup, not execution — should not strip.
-	infos, err := ParseAndWalk("command -v foo", "bash")
+	infos, err := ParseAndWalk("command -v foo", "bash", nil)
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}
@@ -856,7 +856,7 @@ func TestWalkCommandDashV(t *testing.T) {
 
 func TestWalkUnresolvableNoSubcommand(t *testing.T) {
 	// "$CMD status" — unresolvable, Subcommand should be empty.
-	infos, err := ParseAndWalk("$CMD status", "bash")
+	infos, err := ParseAndWalk("$CMD status", "bash", nil)
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}

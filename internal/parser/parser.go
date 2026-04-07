@@ -34,11 +34,11 @@ func Parse(command string, dialect string) (*syntax.File, error) {
 }
 
 // ParseAndWalk parses a shell command string and then walks the AST to extract
-// all command invocations.
-func ParseAndWalk(command string, dialect string) ([]rules.CommandInfo, error) {
+// all command invocations. If cfg is nil, DefaultWalkerConfig() is used.
+func ParseAndWalk(command string, dialect string, cfg *WalkerConfig) ([]rules.CommandInfo, error) {
 	f, err := Parse(command, dialect)
 	if err != nil {
 		return nil, err
 	}
-	return Walk(f), nil
+	return Walk(f, cfg), nil
 }

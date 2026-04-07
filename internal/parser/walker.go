@@ -4,24 +4,57 @@ import (
 	"bytes"
 	"strings"
 
+	"github.com/perezd/stargate/internal/config"
 	"github.com/perezd/stargate/internal/rules"
 	"mvdan.cc/sh/v3/syntax"
 )
 
-// prefixCommands are wrapper commands that should be stripped to reveal the
-// real command underneath.
-var prefixCommands = map[string]bool{
-	"command": true,
-	"builtin": true,
-	"env":     true,
-	"sudo":    true,
-	"doas":    true,
-	"nice":    true,
-	"nohup":   true,
-	"time":    true,
-	"strace":  true,
-	"watch":   true,
-	"timeout": true,
+// WrapperDef holds the parsed metadata for a single wrapper command.
+type WrapperDef struct {
+	// Flags maps flag name to the number of extra arguments it consumes (0 = boolean flag).
+	Flags map[string]int
+	// NoStrip lists flag values that suppress stripping (e.g. "-v" for "command -v").
+	NoStrip []string
+	// ConsumeEnvAssigns causes VAR=val tokens to be skipped before the real command.
+	ConsumeEnvAssigns bool
+	// ConsumeFirstPositional causes the first non-flag positional to be skipped
+	// (used by timeout, whose first positional is the duration).
+	ConsumeFirstPositional bool
+}
+
+// WalkerConfig provides the metadata the walker needs for prefix stripping
+// and subcommand extraction. Built from config.Config.
+type WalkerConfig struct {
+	// Wrappers maps wrapper command names to their config.
+	Wrappers map[string]WrapperDef
+	// CommandFlags maps command names to their global flags for subcommand extraction.
+	// The int value is the number of extra arguments the flag consumes.
+	CommandFlags map[string]map[string]int
+}
+
+// NewWalkerConfig builds a WalkerConfig from the config-package types.
+func NewWalkerConfig(wrappers []config.WrapperConfig, commands []config.CommandFlagsConfig) *WalkerConfig {
+	wc := &WalkerConfig{
+		Wrappers:     make(map[string]WrapperDef, len(wrappers)),
+		CommandFlags: make(map[string]map[string]int, len(commands)),
+	}
+	for _, w := range wrappers {
+		wc.Wrappers[w.Command] = WrapperDef{
+			Flags:                  w.Flags,
+			NoStrip:                w.NoStrip,
+			ConsumeEnvAssigns:      w.ConsumeEnvAssigns,
+			ConsumeFirstPositional: w.ConsumeFirstPositional,
+		}
+	}
+	for _, c := range commands {
+		wc.CommandFlags[c.Command] = c.Flags
+	}
+	return wc
+}
+
+// DefaultWalkerConfig returns a WalkerConfig built from the package defaults.
+func DefaultWalkerConfig() *WalkerConfig {
+	return NewWalkerConfig(config.DefaultWrappers(), config.DefaultCommandFlags())
 }
 
 // wordToString converts a syntax.Word to its string representation.
@@ -100,6 +133,7 @@ func isBraceExpansion(w *syntax.Word) bool {
 // walkerState tracks the AST traversal context.
 type walkerState struct {
 	results []rules.CommandInfo
+	cfg     *WalkerConfig
 
 	// Pipeline position stack (1-indexed, 0 = not in pipeline).
 	pipelineStack []int
@@ -140,8 +174,12 @@ func (ws *walkerState) currentContext() rules.CommandContext {
 }
 
 // Walk traverses a parsed AST and extracts all command invocations.
-func Walk(file *syntax.File) []rules.CommandInfo {
-	ws := &walkerState{}
+// If cfg is nil, DefaultWalkerConfig() is used.
+func Walk(file *syntax.File, cfg *WalkerConfig) []rules.CommandInfo {
+	if cfg == nil {
+		cfg = DefaultWalkerConfig()
+	}
+	ws := &walkerState{cfg: cfg}
 	walkStmts(ws, file.Stmts)
 	return ws.results
 }
@@ -373,7 +411,7 @@ func (ws *walkerState) extractCallExpr(ce *syntax.CallExpr) {
 	}
 
 	env := extractEnv(ce.Assigns)
-	name, remainingArgs := resolveCommand(ce.Args, 0)
+	name, remainingArgs := resolveCommand(ce.Args, 0, ws.cfg.Wrappers)
 
 	var flags, positional []string
 	var subcommand string
@@ -388,7 +426,7 @@ func (ws *walkerState) extractCallExpr(ce *syntax.CallExpr) {
 			}
 		}
 	} else {
-		flags, positional, subcommand = classifyArgs(name, remainingArgs)
+		flags, positional, subcommand = classifyArgs(name, remainingArgs, ws.cfg.CommandFlags)
 	}
 
 	ctx := ws.currentContext()
@@ -432,7 +470,7 @@ func extractEnv(assigns []*syntax.Assign) map[string]string {
 
 // resolveCommand strips prefix wrapper commands from args and returns the
 // resolved command name and remaining argument words. depth limits recursion.
-func resolveCommand(args []*syntax.Word, depth int) (string, []*syntax.Word) {
+func resolveCommand(args []*syntax.Word, depth int, wrappers map[string]WrapperDef) (string, []*syntax.Word) {
 	if depth >= 16 {
 		return "", nil
 	}
@@ -458,209 +496,87 @@ func resolveCommand(args []*syntax.Word, depth int) (string, []*syntax.Word) {
 		return "", rest
 	}
 
-	if !prefixCommands[lit] {
+	wrapper, isWrapper := wrappers[lit]
+	if !isWrapper {
 		return lit, rest
 	}
 
-	// Strip prefix; handle special argument-consuming prefixes.
-	switch lit {
-	case "command":
-		// "command -v foo" and "command -V foo" are lookups, not execution.
+	// Check NoStrip flags — if the first arg matches, don't strip this wrapper.
+	for _, ns := range wrapper.NoStrip {
 		if len(rest) > 0 {
-			if first, ok := wordLiteral(rest[0]); ok && (first == "-v" || first == "-V") {
-				return "command", rest
+			if first, ok := wordLiteral(rest[0]); ok && first == ns {
+				return lit, rest
 			}
 		}
-		rest = skipGenericPrefixFlags(rest)
-	case "env":
-		rest = skipEnvFlags(rest)
-	case "nice":
-		rest = skipNiceFlags(rest)
-	case "timeout":
-		rest = skipTimeoutDuration(rest)
-	case "sudo":
-		rest = skipSudoFlags(rest)
-	case "watch":
-		rest = skipWatchFlags(rest)
-	case "strace":
-		rest = skipStraceFlags(rest)
-	default:
-		// Simple wrappers (builtin, time, doas, nohup): skip leading flags and --.
-		rest = skipGenericPrefixFlags(rest)
 	}
 
-	return resolveCommand(rest, depth+1)
+	// Skip this wrapper's flags and any special positional tokens.
+	rest = skipWrapperArgs(rest, wrapper)
+
+	return resolveCommand(rest, depth+1, wrappers)
 }
 
-// skipEnvFlags skips env-specific flags and VAR=val assignments.
-var envNoArgFlags = map[string]bool{"-i": true, "--": true}
-var envTakesArgFlags = map[string]bool{"-u": true, "-S": true}
-
-func skipEnvFlags(args []*syntax.Word) []*syntax.Word {
+// skipWrapperArgs skips flags and special positional tokens for a wrapper command.
+// It handles:
+//   - Boolean flags (value 0 in Flags map)
+//   - Flags that consume N arguments (value N in Flags map)
+//   - --flag=value forms
+//   - -- terminator
+//   - VAR=val assignments (when ConsumeEnvAssigns is set)
+//   - The first non-flag positional (when ConsumeFirstPositional is set, e.g. timeout duration)
+func skipWrapperArgs(args []*syntax.Word, def WrapperDef) []*syntax.Word {
+	firstPositionalConsumed := false
 	for len(args) > 0 {
 		lit, ok := wordLiteral(args[0])
 		if !ok {
 			break
 		}
+
+		// -- terminates flag processing; consume it and stop.
 		if lit == "--" {
 			args = args[1:]
 			break
 		}
-		if envTakesArgFlags[lit] {
-			args = args[1:] // skip flag
-			if len(args) > 0 {
-				args = args[1:] // skip its argument
-			}
-			continue
-		}
-		if envNoArgFlags[lit] {
-			args = args[1:]
-			continue
-		}
-		// Skip VAR=val assignments.
-		if strings.Contains(lit, "=") {
-			args = args[1:]
-			continue
-		}
-		break
-	}
-	return args
-}
 
-// skipNiceFlags skips nice's -n <value> and other flags.
-func skipNiceFlags(args []*syntax.Word) []*syntax.Word {
-	for len(args) > 0 {
-		lit, ok := wordLiteral(args[0])
-		if !ok {
-			break
-		}
-		if lit == "-n" {
-			args = args[1:] // skip -n
-			if len(args) > 0 {
-				args = args[1:] // skip value
-			}
-			continue
-		}
+		// Flag token.
 		if strings.HasPrefix(lit, "-") {
+			flagName := lit
+			if idx := strings.Index(lit, "="); idx >= 0 {
+				flagName = lit[:idx]
+			}
 			args = args[1:]
-			continue
-		}
-		break
-	}
-	return args
-}
-
-var timeoutTakesArg = map[string]bool{
-	"-k": true, "--kill-after": true,
-	"-s": true, "--signal": true,
-}
-
-// skipTimeoutDuration skips timeout's flags and duration argument.
-func skipTimeoutDuration(args []*syntax.Word) []*syntax.Word {
-	for len(args) > 0 {
-		lit, ok := wordLiteral(args[0])
-		if !ok {
-			break
-		}
-		if !strings.HasPrefix(lit, "-") {
-			// First non-flag is the duration — skip it and return.
-			args = args[1:]
-			break
-		}
-		// Check for --flag=value form.
-		flagName := lit
-		if idx := strings.Index(lit, "="); idx >= 0 {
-			flagName = lit[:idx]
-		}
-		args = args[1:]
-		// If this flag consumes an argument and wasn't --flag=value, skip next.
-		if timeoutTakesArg[flagName] && !strings.Contains(lit, "=") && len(args) > 0 {
-			args = args[1:]
-		}
-	}
-	return args
-}
-
-var sudoTakesArg = map[string]bool{
-	"-u": true, "-g": true, "-c": true, "-D": true,
-	"-r": true, "-t": true, "-T": true, "-U": true,
-}
-var sudoNoArg = map[string]bool{
-	"-h": true, "-i": true, "-s": true, "-l": true, "-v": true,
-	"-k": true, "-K": true, "-n": true, "-b": true,
-	"-e": true, "-A": true, "-S": true, "-H": true,
-	"-P": true,
-}
-
-// skipSudoFlags skips sudo's flags before the command.
-func skipSudoFlags(args []*syntax.Word) []*syntax.Word {
-	for len(args) > 0 {
-		lit, ok := wordLiteral(args[0])
-		if !ok {
-			break
-		}
-		if lit == "--" {
-			args = args[1:]
-			break
-		}
-		if sudoNoArg[lit] {
-			args = args[1:]
-			continue
-		}
-		if sudoTakesArg[lit] {
-			args = args[1:] // skip flag
-			if len(args) > 0 {
-				args = args[1:] // skip its argument
+			// Consume extra positional arguments this flag takes (only when not --flag=val form).
+			if def.Flags != nil {
+				if argc, known := def.Flags[flagName]; known && argc > 0 && !strings.Contains(lit, "=") {
+					for j := 0; j < argc && len(args) > 0; j++ {
+						args = args[1:]
+					}
+				}
 			}
 			continue
 		}
-		break
-	}
-	return args
-}
 
-// skipGenericPrefixFlags skips leading flags (tokens starting with -) and
-// a terminating -- for simple wrapper commands like command, builtin, time,
-// strace, watch, doas, nohup. This ensures "command -- rm" and "time -p rm"
-// correctly resolve to "rm".
-func skipGenericPrefixFlags(args []*syntax.Word) []*syntax.Word {
-	for len(args) > 0 {
-		lit, ok := wordLiteral(args[0])
-		if !ok {
-			break
-		}
-		if lit == "--" {
-			args = args[1:]
-			break
-		}
-		if strings.HasPrefix(lit, "-") {
+		// VAR=val assignment (env-like wrappers).
+		if def.ConsumeEnvAssigns && strings.Contains(lit, "=") {
 			args = args[1:]
 			continue
 		}
+
+		// First positional argument (timeout-like wrappers: the duration).
+		if def.ConsumeFirstPositional && !firstPositionalConsumed {
+			firstPositionalConsumed = true
+			args = args[1:]
+			continue
+		}
+
+		// Non-flag, non-special positional: this is the real command.
 		break
 	}
 	return args
-}
-
-// skipWatchFlags skips watch-specific flags. -n/--interval takes an argument.
-var watchTakesArg = map[string]bool{"-n": true, "--interval": true, "-d": true, "--differences": true}
-
-func skipWatchFlags(args []*syntax.Word) []*syntax.Word {
-	return skipFlagsWithArgs(args, watchTakesArg)
-}
-
-// skipStraceFlags skips strace-specific flags. Many take arguments.
-var straceTakesArg = map[string]bool{
-	"-e": true, "-o": true, "-p": true, "-s": true, "-P": true,
-	"-I": true, "-b": true, "-a": true, "-X": true,
-}
-
-func skipStraceFlags(args []*syntax.Word) []*syntax.Word {
-	return skipFlagsWithArgs(args, straceTakesArg)
 }
 
 // skipFlagsWithArgs is a generic flag skipper that handles flags consuming
-// arguments, --flag=value forms, and -- termination.
+// arguments, --flag=value forms, and -- termination. Retained as a helper.
 func skipFlagsWithArgs(args []*syntax.Word, takesArg map[string]bool) []*syntax.Word {
 	for len(args) > 0 {
 		lit, ok := wordLiteral(args[0])
@@ -686,36 +602,13 @@ func skipFlagsWithArgs(args []*syntax.Word, takesArg map[string]bool) []*syntax.
 	return args
 }
 
-// knownGlobalFlags maps command names to their global flags and how many
-// arguments each flag consumes. Commands not in this map have no special
-// global flag handling.
-var knownGlobalFlags = map[string]map[string]int{
-	"git": {
-		"-C": 1, "--git-dir": 1, "--work-tree": 1,
-		"--no-pager": 0, "--bare": 0, "--no-replace-objects": 0,
-	},
-	"docker": {
-		"--context": 1, "-c": 1, "--host": 1, "-H": 1,
-		"--log-level": 1, "-l": 1, "--tls": 0, "--tlsverify": 0,
-		"--config": 1, "-D": 0, "--debug": 0,
-	},
-	"gh": {
-		"--repo": 1, "-R": 1,
-	},
-	"kubectl": {
-		"--context": 1, "--namespace": 1, "-n": 1,
-		"--cluster": 1, "--user": 1, "--kubeconfig": 1,
-		"-s": 1, "--server": 1,
-	},
-}
-
 // classifyArgs splits args into flags, positional args, and the subcommand.
 // cmdName is used to look up known global flags that should be skipped
 // (along with their arguments) when finding the subcommand.
-func classifyArgs(cmdName string, args []*syntax.Word) (flags []string, positional []string, subcommand string) {
+func classifyArgs(cmdName string, args []*syntax.Word, commandFlags map[string]map[string]int) (flags []string, positional []string, subcommand string) {
 	endOfOptions := false
 	subcommandFound := false
-	globalFlags := knownGlobalFlags[cmdName]
+	globalFlags := commandFlags[cmdName]
 
 	for i := 0; i < len(args); i++ {
 		w := args[i]
