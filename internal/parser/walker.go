@@ -333,11 +333,15 @@ func walkBinaryCmd(ws *walkerState, bc *syntax.BinaryCmd) {
 	isPipe := bc.Op == syntax.Pipe || bc.Op == syntax.PipeAll
 
 	if isPipe {
+		pipeOp := "|"
+		if bc.Op == syntax.PipeAll {
+			pipeOp = "|&"
+		}
 		stages := collectPipelineStages(bc)
 		for i, stmt := range stages {
-			pos := i + 1 // 1-indexed: 1 = source, 2+ = sink
+			pos := i + 1 // 1-indexed: 1 = first stage, 2+ = subsequent
 			ws.pipelineStack = append(ws.pipelineStack, pos)
-			ws.parentOpStack = append(ws.parentOpStack, "|")
+			ws.parentOpStack = append(ws.parentOpStack, pipeOp)
 			walkStmt(ws, stmt)
 			ws.parentOpStack = ws.parentOpStack[:len(ws.parentOpStack)-1]
 			ws.pipelineStack = ws.pipelineStack[:len(ws.pipelineStack)-1]
