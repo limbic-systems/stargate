@@ -374,7 +374,22 @@ func (ws *walkerState) extractCallExpr(ce *syntax.CallExpr) {
 
 	env := extractEnv(ce.Assigns)
 	name, remainingArgs := resolveCommand(ce.Args, 0)
-	flags, positional, subcommand := classifyArgs(name, remainingArgs)
+
+	var flags, positional []string
+	var subcommand string
+	if name == "" {
+		// Unresolvable command — treat all remaining args as raw positional
+		// without flag parsing or subcommand extraction.
+		for _, w := range remainingArgs {
+			if lit, ok := wordLiteral(w); ok {
+				positional = append(positional, lit)
+			} else {
+				positional = append(positional, wordToString(w))
+			}
+		}
+	} else {
+		flags, positional, subcommand = classifyArgs(name, remainingArgs)
+	}
 
 	ctx := ws.currentContext()
 
@@ -449,6 +464,14 @@ func resolveCommand(args []*syntax.Word, depth int) (string, []*syntax.Word) {
 
 	// Strip prefix; handle special argument-consuming prefixes.
 	switch lit {
+	case "command":
+		// "command -v foo" and "command -V foo" are lookups, not execution.
+		if len(rest) > 0 {
+			if first, ok := wordLiteral(rest[0]); ok && (first == "-v" || first == "-V") {
+				return "command", rest
+			}
+		}
+		rest = skipGenericPrefixFlags(rest)
 	case "env":
 		rest = skipEnvFlags(rest)
 	case "nice":
@@ -457,9 +480,12 @@ func resolveCommand(args []*syntax.Word, depth int) (string, []*syntax.Word) {
 		rest = skipTimeoutDuration(rest)
 	case "sudo":
 		rest = skipSudoFlags(rest)
+	case "watch":
+		rest = skipWatchFlags(rest)
+	case "strace":
+		rest = skipStraceFlags(rest)
 	default:
-		// Generic wrapper prefixes (command, builtin, time, strace, watch,
-		// doas, nohup): skip any leading flags and -- before the real command.
+		// Simple wrappers (builtin, time, doas, nohup): skip leading flags and --.
 		rest = skipGenericPrefixFlags(rest)
 	}
 
@@ -612,6 +638,50 @@ func skipGenericPrefixFlags(args []*syntax.Word) []*syntax.Word {
 			continue
 		}
 		break
+	}
+	return args
+}
+
+// skipWatchFlags skips watch-specific flags. -n/--interval takes an argument.
+var watchTakesArg = map[string]bool{"-n": true, "--interval": true, "-d": true, "--differences": true}
+
+func skipWatchFlags(args []*syntax.Word) []*syntax.Word {
+	return skipFlagsWithArgs(args, watchTakesArg)
+}
+
+// skipStraceFlags skips strace-specific flags. Many take arguments.
+var straceTakesArg = map[string]bool{
+	"-e": true, "-o": true, "-p": true, "-s": true, "-P": true,
+	"-I": true, "-b": true, "-a": true, "-X": true,
+}
+
+func skipStraceFlags(args []*syntax.Word) []*syntax.Word {
+	return skipFlagsWithArgs(args, straceTakesArg)
+}
+
+// skipFlagsWithArgs is a generic flag skipper that handles flags consuming
+// arguments, --flag=value forms, and -- termination.
+func skipFlagsWithArgs(args []*syntax.Word, takesArg map[string]bool) []*syntax.Word {
+	for len(args) > 0 {
+		lit, ok := wordLiteral(args[0])
+		if !ok {
+			break
+		}
+		if lit == "--" {
+			args = args[1:]
+			break
+		}
+		if !strings.HasPrefix(lit, "-") {
+			break
+		}
+		flagName := lit
+		if idx := strings.Index(lit, "="); idx >= 0 {
+			flagName = lit[:idx]
+		}
+		args = args[1:]
+		if takesArg[flagName] && !strings.Contains(lit, "=") && len(args) > 0 {
+			args = args[1:]
+		}
 	}
 	return args
 }

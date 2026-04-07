@@ -825,3 +825,48 @@ func TestWalkSubcommandGlobalFlagSkipping(t *testing.T) {
 		})
 	}
 }
+
+func TestWalkWatchWithInterval(t *testing.T) {
+	// "watch -n 2 ls" — -n consumes 2, command is ls.
+	infos, err := ParseAndWalk("watch -n 2 ls", "bash")
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	if len(infos) == 0 {
+		t.Fatal("expected at least 1 command")
+	}
+	if infos[0].Name != "ls" {
+		t.Errorf("expected name=ls, got %q", infos[0].Name)
+	}
+}
+
+func TestWalkCommandDashV(t *testing.T) {
+	// "command -v foo" is a lookup, not execution — should not strip.
+	infos, err := ParseAndWalk("command -v foo", "bash")
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	if len(infos) == 0 {
+		t.Fatal("expected at least 1 command")
+	}
+	if infos[0].Name != "command" {
+		t.Errorf("expected name=command (lookup mode), got %q", infos[0].Name)
+	}
+}
+
+func TestWalkUnresolvableNoSubcommand(t *testing.T) {
+	// "$CMD status" — unresolvable, Subcommand should be empty.
+	infos, err := ParseAndWalk("$CMD status", "bash")
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	if len(infos) == 0 {
+		t.Fatal("expected at least 1 command")
+	}
+	if infos[0].Name != "" {
+		t.Errorf("expected empty Name, got %q", infos[0].Name)
+	}
+	if infos[0].Subcommand != "" {
+		t.Errorf("expected empty Subcommand for unresolvable command, got %q", infos[0].Subcommand)
+	}
+}
