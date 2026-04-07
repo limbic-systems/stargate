@@ -120,8 +120,8 @@ func isUnresolvable(w *syntax.Word) bool {
 	return false
 }
 
-// isBraceExpansion returns true if the word looks like a brace expansion
-// attempt (contains both '{' and ','), which is an evasion technique.
+// isBraceExpansion detects brace expansion patterns in command-name position,
+// in both comma-separated ({a,b,c}) and range ({a..z}, {1..3}) forms.
 func isBraceExpansion(w *syntax.Word) bool {
 	lit, ok := wordLiteral(w)
 	if !ok {
@@ -213,19 +213,18 @@ func walkStmt(ws *walkerState, stmt *syntax.Stmt) {
 
 	if len(stmt.Redirs) > 0 && directIdx < len(ws.results) {
 		redirs := extractRedirects(stmt.Redirs)
-		switch stmt.Cmd.(type) {
+		switch c := stmt.Cmd.(type) {
 		case *syntax.CallExpr:
 			// Attach to the direct command, but only if extractCallExpr actually
 			// appended a CommandInfo (it won't for assignment-only stmts like FOO=bar).
-			ce := stmt.Cmd.(*syntax.CallExpr)
-			if directIdx < len(ws.results) && ws.results[directIdx].RawNode == ce {
+			if directIdx < len(ws.results) && ws.results[directIdx].RawNode == c {
 				ws.results[directIdx].Redirects = append(ws.results[directIdx].Redirects, redirs...)
 			}
 		case *syntax.BinaryCmd:
 			// For pipelines (cmd1 | cmd2 > out), attach to the last stage's
 			// direct command. If the last stage is compound, find the last
 			// direct CallExpr inside it.
-			bc := stmt.Cmd.(*syntax.BinaryCmd)
+			bc := c
 			stages := collectPipelineStages(bc)
 			if len(stages) > 0 {
 				lastStage := stages[len(stages)-1]
@@ -332,8 +331,15 @@ func walkCmd(ws *walkerState, cmd syntax.Command) {
 		// coproc <stmt> — walk the inner statement.
 		walkStmt(ws, c.Stmt)
 
-	case *syntax.ArithmCmd, *syntax.LetClause:
-		// No sub-commands to extract.
+	case *syntax.ArithmCmd:
+		if c.X != nil {
+			walkArithmExpr(ws, c.X)
+		}
+
+	case *syntax.LetClause:
+		for _, expr := range c.Exprs {
+			walkArithmExpr(ws, expr)
+		}
 	}
 }
 
@@ -478,6 +484,8 @@ func walkArithmExpr(ws *walkerState, expr syntax.ArithmExpr) {
 		walkArithmExpr(ws, e.X)
 	case *syntax.ParenArithm:
 		walkArithmExpr(ws, e.X)
+	case *syntax.FlagsArithm:
+		walkArithmExpr(ws, e.X)
 	}
 }
 
@@ -617,6 +625,14 @@ func skipWrapperArgs(args []*syntax.Word, def WrapperDef) []*syntax.Word {
 	for len(args) > 0 {
 		lit, ok := wordLiteral(args[0])
 		if !ok {
+			// Non-literal word — still check for env assignments like FOO="$bar"
+			if def.ConsumeEnvAssigns {
+				raw := wordToString(args[0])
+				if strings.Contains(raw, "=") && !strings.HasPrefix(raw, "-") {
+					args = args[1:]
+					continue
+				}
+			}
 			break
 		}
 
@@ -673,13 +689,9 @@ func classifyArgs(cmdName string, args []*syntax.Word, commandFlags map[string]m
 		w := args[i]
 		lit, ok := wordLiteral(w)
 		if !ok {
-			// Dynamic word — treat as positional.
 			raw := wordToString(w)
 			positional = append(positional, raw)
-			if !endOfOptions && !subcommandFound {
-				subcommand = raw
-				subcommandFound = true
-			}
+			// Don't promote dynamic words to subcommand — they're unresolvable.
 			continue
 		}
 

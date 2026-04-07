@@ -365,6 +365,10 @@ func TestWalkPrefixDepthLimit(t *testing.T) {
 	if infos[0].Name != "" {
 		t.Errorf("expected empty Name (depth limit exceeded), got %q", infos[0].Name)
 	}
+	// The remaining tokens (the command prefixes + "rm") must still be preserved as args.
+	if len(infos[0].Args) == 0 {
+		t.Errorf("expected Args to be non-empty (tokens preserved when depth limit exceeded)")
+	}
 }
 
 // ---- Evasion detection ----
