@@ -229,6 +229,20 @@ func TestWalkPrefixStripping(t *testing.T) {
 			wantArgs:  []string{"/"},
 		},
 		{
+			name:     "command with --",
+			input:    "command -- rm -rf /",
+			wantName: "rm",
+			wantFlags: []string{"-rf"},
+			wantArgs:  []string{"/"},
+		},
+		{
+			name:     "time -p prefix",
+			input:    "time -p rm -rf /",
+			wantName: "rm",
+			wantFlags: []string{"-rf"},
+			wantArgs:  []string{"/"},
+		},
+		{
 			name:     "env prefix",
 			input:    "env ls -la",
 			wantName: "ls",
@@ -369,17 +383,26 @@ func TestWalkUnresolvableVar(t *testing.T) {
 }
 
 func TestWalkBraceExpansion(t *testing.T) {
-	// Brace expansion like {rm,-rf,/} — the shell parses this as a Lit with
-	// braces. We detect it as an evasion.
-	infos, err := ParseAndWalk("{rm,-rf,/}", "bash")
-	if err != nil {
-		t.Fatalf("error: %v", err)
+	tests := []struct {
+		name string
+		cmd  string
+	}{
+		{"comma form", "{rm,-rf,/}"},
+		{"range form", "{a..z}"},
 	}
-	if len(infos) == 0 {
-		t.Fatal("expected at least 1 result")
-	}
-	if infos[0].Name != "" {
-		t.Errorf("expected empty Name for brace expansion command, got %q", infos[0].Name)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			infos, err := ParseAndWalk(tc.cmd, "bash")
+			if err != nil {
+				t.Fatalf("error: %v", err)
+			}
+			if len(infos) == 0 {
+				t.Fatal("expected at least 1 result")
+			}
+			if infos[0].Name != "" {
+				t.Errorf("expected empty Name for brace expansion command, got %q", infos[0].Name)
+			}
+		})
 	}
 }
 

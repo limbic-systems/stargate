@@ -90,7 +90,11 @@ func isBraceExpansion(w *syntax.Word) bool {
 	if !ok {
 		return false
 	}
-	return strings.Contains(lit, "{") && strings.Contains(lit, ",")
+	// Detect both comma-separated ({a,b,c}) and range ({a..z}, {1..3}) forms.
+	if !strings.Contains(lit, "{") {
+		return false
+	}
+	return strings.Contains(lit, ",") || strings.Contains(lit, "..")
 }
 
 // walkerState tracks the AST traversal context.
@@ -170,9 +174,15 @@ func walkStmt(ws *walkerState, stmt *syntax.Stmt) {
 				ws.results[directIdx].Redirects = append(ws.results[directIdx].Redirects, redirs...)
 			}
 		case *syntax.BinaryCmd:
-			// For pipelines (cmd1 | cmd2 > out), attach to the last stage.
-			lastIdx := len(ws.results) - 1
-			ws.results[lastIdx].Redirects = append(ws.results[lastIdx].Redirects, redirs...)
+			// For pipelines (cmd1 | cmd2 > out), attach to the last stage's
+			// direct command. Walk backwards to find the last result with a
+			// RawNode (i.e., a direct CallExpr, not a $() nested command).
+			for i := len(ws.results) - 1; i >= directIdx; i-- {
+				if ws.results[i].RawNode != nil && ws.results[i].Context.PipelinePosition > 0 {
+					ws.results[i].Redirects = append(ws.results[i].Redirects, redirs...)
+					break
+				}
+			}
 		default:
 			// For other compound commands (subshells, if/while), skip —
 			// redirects apply to the compound, not to nested commands.
@@ -446,6 +456,10 @@ func resolveCommand(args []*syntax.Word, depth int) (string, []*syntax.Word) {
 		rest = skipTimeoutDuration(rest)
 	case "sudo":
 		rest = skipSudoFlags(rest)
+	default:
+		// Generic wrapper prefixes (command, builtin, time, strace, watch,
+		// doas, nohup): skip any leading flags and -- before the real command.
+		rest = skipGenericPrefixFlags(rest)
 	}
 
 	return resolveCommand(rest, depth+1)
@@ -571,6 +585,29 @@ func skipSudoFlags(args []*syntax.Word) []*syntax.Word {
 			if len(args) > 0 {
 				args = args[1:] // skip its argument
 			}
+			continue
+		}
+		break
+	}
+	return args
+}
+
+// skipGenericPrefixFlags skips leading flags (tokens starting with -) and
+// a terminating -- for simple wrapper commands like command, builtin, time,
+// strace, watch, doas, nohup. This ensures "command -- rm" and "time -p rm"
+// correctly resolve to "rm".
+func skipGenericPrefixFlags(args []*syntax.Word) []*syntax.Word {
+	for len(args) > 0 {
+		lit, ok := wordLiteral(args[0])
+		if !ok {
+			break
+		}
+		if lit == "--" {
+			args = args[1:]
+			break
+		}
+		if strings.HasPrefix(lit, "-") {
+			args = args[1:]
 			continue
 		}
 		break
