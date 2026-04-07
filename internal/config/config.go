@@ -1,0 +1,370 @@
+// Package config provides TOML config loading and validation for stargate.
+package config
+
+import (
+	"fmt"
+	"net"
+	"os"
+	"regexp"
+	"strconv"
+	"time"
+
+	"github.com/BurntSushi/toml"
+)
+
+// parseDuration validates that a string is a valid, non-negative Go duration.
+// Empty strings are allowed (treated as unset).
+func parseDuration(field, value string) error {
+	if value == "" {
+		return nil
+	}
+	d, err := time.ParseDuration(value)
+	if err != nil {
+		return fmt.Errorf("config: %s: invalid duration %q: %w", field, value, err)
+	}
+	if d < 0 {
+		return fmt.Errorf("config: %s: duration must be non-negative; got %q", field, value)
+	}
+	return nil
+}
+
+// parseDayDuration validates non-negative duration strings that may use "d" suffix for days.
+// Supports Go durations (e.g., "1h", "0s") and day-based durations (e.g., "90d", "7d").
+// Day-based values must be positive (>= 1d); use "0s" for zero.
+func parseDayDuration(field, value string) error {
+	if value == "" {
+		return nil
+	}
+	// Try standard Go duration first.
+	if d, err := time.ParseDuration(value); err == nil {
+		if d < 0 {
+			return fmt.Errorf("config: %s: duration must be non-negative; got %q", field, value)
+		}
+		return nil
+	}
+	// Try strict "Nd" format for days (e.g., "90d", "7d"). Always positive by regex.
+	if matched, _ := regexp.MatchString(`^[1-9]\d*d$`, value); matched {
+		return nil
+	}
+	return fmt.Errorf("config: %s: invalid duration %q (use Go durations like \"1h\" or day-based like \"90d\")", field, value)
+}
+
+// validateRulePattern checks that a rule's regex pattern compiles.
+func validateRulePattern(pattern string) error {
+	if pattern == "" {
+		return nil
+	}
+	_, err := regexp.Compile(pattern)
+	if err != nil {
+		return fmt.Errorf("invalid pattern %q: %w", pattern, err)
+	}
+	return nil
+}
+
+// Config is the top-level configuration structure for stargate.
+type Config struct {
+	Server     ServerConfig              `toml:"server"`
+	Parser     ParserConfig              `toml:"parser"`
+	Classifier ClassifierConfig          `toml:"classifier"`
+	Scopes     map[string][]string       `toml:"scopes"`
+	Rules      RulesConfig               `toml:"rules"`
+	LLM        LLMConfig                 `toml:"llm"`
+	Scrubbing  ScrubbingConfig           `toml:"scrubbing"`
+	Corpus     CorpusConfig              `toml:"corpus"`
+	Telemetry  TelemetryConfig           `toml:"telemetry"`
+	Log        LogConfig                 `toml:"log"`
+}
+
+// ServerConfig holds HTTP server settings.
+type ServerConfig struct {
+	Listen  string `toml:"listen"`
+	Timeout string `toml:"timeout"`
+}
+
+// ParserConfig holds bash parser settings.
+type ParserConfig struct {
+	Dialect        string `toml:"dialect"`
+	ResolveAliases bool   `toml:"resolve_aliases"`
+}
+
+// ClassifierConfig holds classifier behaviour settings.
+type ClassifierConfig struct {
+	DefaultDecision       string `toml:"default_decision"`
+	UnresolvableExpansion string `toml:"unresolvable_expansion"`
+	MaxASTDepth           int    `toml:"max_ast_depth"`
+	MaxCommandLength      int    `toml:"max_command_length"`
+}
+
+// RulesConfig holds the three priority tiers of rules.
+type RulesConfig struct {
+	Red    []Rule `toml:"red"`
+	Green  []Rule `toml:"green"`
+	Yellow []Rule `toml:"yellow"`
+}
+
+// Rule describes a single classification rule.
+type Rule struct {
+	Command     string         `toml:"command"`
+	Commands    []string       `toml:"commands"`
+	Subcommands []string       `toml:"subcommands"`
+	Flags       []string       `toml:"flags"`
+	Args        []string       `toml:"args"`
+	Pattern     string         `toml:"pattern"`
+	Scope       string         `toml:"scope"`
+	Context     string         `toml:"context"`
+	Resolve     *ResolveConfig `toml:"resolve"`
+	LLMReview   *bool          `toml:"llm_review"`
+	Reason      string         `toml:"reason"`
+}
+
+// ResolveConfig specifies a contextual trust resolver.
+type ResolveConfig struct {
+	Resolver string `toml:"resolver"`
+	Scope    string `toml:"scope"`
+}
+
+// LLMConfig holds LLM reviewer settings.
+type LLMConfig struct {
+	Provider                   string   `toml:"provider"`
+	Model                      string   `toml:"model"`
+	APIKey                     string   `toml:"api_key"`
+	MaxTokens                  int      `toml:"max_tokens"`
+	Temperature                float64  `toml:"temperature"`
+	AllowFileRetrieval         bool     `toml:"allow_file_retrieval"`
+	MaxFileSize                int      `toml:"max_file_size"`
+	AllowedPaths               []string `toml:"allowed_paths"`
+	DeniedPaths                []string `toml:"denied_paths"`
+	SystemPrompt               string   `toml:"system_prompt"`
+	MaxResponseReasoningLength int      `toml:"max_response_reasoning_length"`
+}
+
+// ScrubbingConfig holds secret-scrubbing settings.
+type ScrubbingConfig struct {
+	ExtraPatterns []string `toml:"extra_patterns"`
+}
+
+// CorpusConfig holds precedent corpus settings.
+type CorpusConfig struct {
+	Enabled                  bool    `toml:"enabled"`
+	Path                     string  `toml:"path"`
+	MaxPrecedents            int     `toml:"max_precedents"`
+	MinSimilarity            float64 `toml:"min_similarity"`
+	ExactHitMode             string  `toml:"exact_hit_mode"`
+	MaxAge                   string  `toml:"max_age"`
+	MaxEntries               int     `toml:"max_entries"`
+	PruneInterval            string  `toml:"prune_interval"`
+	StoreDecisions           string  `toml:"store_decisions"`
+	StoreReasoning           bool    `toml:"store_reasoning"`
+	StoreRawCommand          bool    `toml:"store_raw_command"`
+	StoreUserApprovals       bool    `toml:"store_user_approvals"`
+	MaxPrecedentsPerDecision int     `toml:"max_precedents_per_decision"`
+}
+
+// TelemetryConfig holds OpenTelemetry export settings.
+type TelemetryConfig struct {
+	Enabled        bool   `toml:"enabled"`
+	Endpoint       string `toml:"endpoint"`
+	Username       string `toml:"username"`
+	Password       string `toml:"password"`
+	Protocol       string `toml:"protocol"`
+	ExportLogs     bool   `toml:"export_logs"`
+	ExportMetrics  bool   `toml:"export_metrics"`
+	ExportTraces   bool   `toml:"export_traces"`
+	ServiceName    string `toml:"service_name"`
+}
+
+// LogConfig holds local logging settings.
+type LogConfig struct {
+	Level       string `toml:"level"`
+	Format      string `toml:"format"`
+	File        string `toml:"file"`
+	LogCommands bool   `toml:"log_commands"`
+	LogLLM      bool   `toml:"log_llm"`
+}
+
+// Load reads the TOML config at path, applies defaults, and validates it.
+func Load(path string) (*Config, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("config: read %q: %w", path, err)
+	}
+
+	var cfg Config
+	if _, err := toml.Decode(string(data), &cfg); err != nil {
+		return nil, fmt.Errorf("config: parse %q: %w", path, err)
+	}
+
+	applyDefaults(&cfg)
+
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+
+	return &cfg, nil
+}
+
+// applyDefaults fills in sensible defaults for optional fields.
+func applyDefaults(cfg *Config) {
+	if cfg.Server.Listen == "" {
+		cfg.Server.Listen = "127.0.0.1:9099"
+	}
+	if cfg.Server.Timeout == "" {
+		cfg.Server.Timeout = "10s"
+	}
+	if cfg.LLM.Provider == "" {
+		cfg.LLM.Provider = "anthropic"
+	}
+	if cfg.Parser.Dialect == "" {
+		cfg.Parser.Dialect = "bash"
+	}
+	if cfg.Classifier.DefaultDecision == "" {
+		cfg.Classifier.DefaultDecision = "yellow"
+	}
+	if cfg.Classifier.UnresolvableExpansion == "" {
+		cfg.Classifier.UnresolvableExpansion = "yellow"
+	}
+	if cfg.Classifier.MaxASTDepth == 0 {
+		cfg.Classifier.MaxASTDepth = 64
+	}
+	if cfg.Classifier.MaxCommandLength == 0 {
+		cfg.Classifier.MaxCommandLength = 65536
+	}
+	if cfg.Corpus.Path == "" {
+		cfg.Corpus.Path = "~/.local/share/stargate/precedents.db"
+	}
+	if cfg.Corpus.ExactHitMode == "" {
+		cfg.Corpus.ExactHitMode = "precedent"
+	}
+}
+
+// Validate checks that required fields have acceptable values.
+// This is the authority — if Validate passes, the config is safe to use.
+func (cfg *Config) Validate() error {
+	// --- Server ---
+	if cfg.Server.Listen == "" {
+		return fmt.Errorf("config: server.listen is required")
+	}
+	host, port, err := net.SplitHostPort(cfg.Server.Listen)
+	if err != nil {
+		return fmt.Errorf("config: server.listen is not a valid host:port: %w", err)
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || !ip.IsLoopback() {
+		return fmt.Errorf("config: server.listen must bind to a loopback IP (127.0.0.0/8 or [::1]); got %q", cfg.Server.Listen)
+	}
+	portNum, err := strconv.Atoi(port)
+	if err != nil || portNum < 0 || portNum > 65535 {
+		return fmt.Errorf("config: server.listen port must be 0-65535; got %q", port)
+	}
+	if err := parseDuration("server.timeout", cfg.Server.Timeout); err != nil {
+		return err
+	}
+
+	// --- Parser ---
+	validDialects := map[string]bool{"bash": true, "posix": true, "mksh": true}
+	if !validDialects[cfg.Parser.Dialect] {
+		return fmt.Errorf("config: parser.dialect must be bash, posix, or mksh; got %q", cfg.Parser.Dialect)
+	}
+
+	// --- Classifier ---
+	validDecisions := map[string]bool{"red": true, "yellow": true, "green": true}
+	if !validDecisions[cfg.Classifier.DefaultDecision] {
+		return fmt.Errorf("config: classifier.default_decision must be red, yellow, or green; got %q", cfg.Classifier.DefaultDecision)
+	}
+	if cfg.Classifier.UnresolvableExpansion != "" && !validDecisions[cfg.Classifier.UnresolvableExpansion] {
+		return fmt.Errorf("config: classifier.unresolvable_expansion must be red, yellow, or green; got %q", cfg.Classifier.UnresolvableExpansion)
+	}
+	if cfg.Classifier.MaxASTDepth < 0 {
+		return fmt.Errorf("config: classifier.max_ast_depth must be non-negative; got %d", cfg.Classifier.MaxASTDepth)
+	}
+	if cfg.Classifier.MaxCommandLength < 0 {
+		return fmt.Errorf("config: classifier.max_command_length must be non-negative; got %d", cfg.Classifier.MaxCommandLength)
+	}
+
+	// --- LLM ---
+	if cfg.LLM.MaxTokens < 0 {
+		return fmt.Errorf("config: llm.max_tokens must be non-negative; got %d", cfg.LLM.MaxTokens)
+	}
+	if cfg.LLM.MaxFileSize < 0 {
+		return fmt.Errorf("config: llm.max_file_size must be non-negative; got %d", cfg.LLM.MaxFileSize)
+	}
+	if cfg.LLM.Temperature < 0 || cfg.LLM.Temperature > 2 {
+		return fmt.Errorf("config: llm.temperature must be between 0.0 and 2.0; got %f", cfg.LLM.Temperature)
+	}
+	if cfg.LLM.MaxResponseReasoningLength < 0 {
+		return fmt.Errorf("config: llm.max_response_reasoning_length must be non-negative; got %d", cfg.LLM.MaxResponseReasoningLength)
+	}
+
+	// --- Corpus ---
+	validExactHitModes := map[string]bool{"": true, "precedent": true, "auto_decide": true}
+	if !validExactHitModes[cfg.Corpus.ExactHitMode] {
+		return fmt.Errorf("config: corpus.exact_hit_mode must be precedent or auto_decide; got %q", cfg.Corpus.ExactHitMode)
+	}
+	if cfg.Corpus.MinSimilarity < 0 || cfg.Corpus.MinSimilarity > 1 {
+		return fmt.Errorf("config: corpus.min_similarity must be between 0.0 and 1.0; got %f", cfg.Corpus.MinSimilarity)
+	}
+	if cfg.Corpus.MaxPrecedents < 0 {
+		return fmt.Errorf("config: corpus.max_precedents must be non-negative; got %d", cfg.Corpus.MaxPrecedents)
+	}
+	if cfg.Corpus.MaxEntries < 0 {
+		return fmt.Errorf("config: corpus.max_entries must be non-negative; got %d", cfg.Corpus.MaxEntries)
+	}
+	if cfg.Corpus.MaxPrecedentsPerDecision < 0 {
+		return fmt.Errorf("config: corpus.max_precedents_per_decision must be non-negative; got %d", cfg.Corpus.MaxPrecedentsPerDecision)
+	}
+	if err := parseDayDuration("corpus.max_age", cfg.Corpus.MaxAge); err != nil {
+		return err
+	}
+	if err := parseDuration("corpus.prune_interval", cfg.Corpus.PruneInterval); err != nil {
+		return err
+	}
+	validStoreDecisions := map[string]bool{"": true, "all": true, "allow_only": true, "deny_only": true}
+	if !validStoreDecisions[cfg.Corpus.StoreDecisions] {
+		return fmt.Errorf("config: corpus.store_decisions must be all, allow_only, or deny_only; got %q", cfg.Corpus.StoreDecisions)
+	}
+
+	// --- Scrubbing: validate extra regex patterns compile ---
+	for i, pattern := range cfg.Scrubbing.ExtraPatterns {
+		if _, err := regexp.Compile(pattern); err != nil {
+			return fmt.Errorf("config: scrubbing.extra_patterns[%d]: invalid regex %q: %w", i, pattern, err)
+		}
+	}
+
+	// --- Rules: validate regex patterns compile ---
+	for i, rule := range cfg.Rules.Red {
+		if err := validateRulePattern(rule.Pattern); err != nil {
+			return fmt.Errorf("config: rules.red[%d]: %w", i, err)
+		}
+	}
+	for i, rule := range cfg.Rules.Green {
+		if err := validateRulePattern(rule.Pattern); err != nil {
+			return fmt.Errorf("config: rules.green[%d]: %w", i, err)
+		}
+	}
+	for i, rule := range cfg.Rules.Yellow {
+		if err := validateRulePattern(rule.Pattern); err != nil {
+			return fmt.Errorf("config: rules.yellow[%d]: %w", i, err)
+		}
+	}
+
+	// --- Telemetry ---
+	if cfg.Telemetry.Enabled && cfg.Telemetry.Endpoint == "" {
+		return fmt.Errorf("config: telemetry.endpoint is required when telemetry is enabled")
+	}
+	validTelemetryProtocols := map[string]bool{"": true, "http/protobuf": true, "grpc": true}
+	if !validTelemetryProtocols[cfg.Telemetry.Protocol] {
+		return fmt.Errorf("config: telemetry.protocol must be http/protobuf or grpc; got %q", cfg.Telemetry.Protocol)
+	}
+
+	// --- Log ---
+	validLogLevels := map[string]bool{"": true, "debug": true, "info": true, "warn": true, "error": true}
+	if !validLogLevels[cfg.Log.Level] {
+		return fmt.Errorf("config: log.level must be debug, info, warn, or error; got %q", cfg.Log.Level)
+	}
+	validLogFormats := map[string]bool{"": true, "text": true, "json": true}
+	if !validLogFormats[cfg.Log.Format] {
+		return fmt.Errorf("config: log.format must be text or json; got %q", cfg.Log.Format)
+	}
+
+	return nil
+}
