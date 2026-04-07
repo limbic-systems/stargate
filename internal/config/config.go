@@ -221,6 +221,12 @@ func applyDefaults(cfg *Config) {
 	if cfg.Classifier.MaxCommandLength == 0 {
 		cfg.Classifier.MaxCommandLength = 65536
 	}
+	if cfg.Corpus.Path == "" {
+		cfg.Corpus.Path = "~/.local/share/stargate/precedents.db"
+	}
+	if cfg.Corpus.ExactHitMode == "" {
+		cfg.Corpus.ExactHitMode = "precedent"
+	}
 }
 
 // Validate checks that required fields have acceptable values.
