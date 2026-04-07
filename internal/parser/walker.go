@@ -142,12 +142,6 @@ type walkerState struct {
 	// Pipeline position stack (1-indexed, 0 = not in pipeline).
 	pipelineStack []int
 
-	// lastPipeStageIdx is the results index recorded just before the last
-	// pipeline stage is walked. Used in walkStmt to attach redirects to the
-	// correct commands when the last stage is a compound command that may
-	// contain nested pipelines (e.g., cmd1 | { cmd2 | cmd3; } > out).
-	lastPipeStageIdx int
-
 	// Subshell nesting depth.
 	subshellDepth int
 
@@ -251,15 +245,19 @@ func walkStmt(ws *walkerState, stmt *syntax.Stmt) {
 						}
 					}
 				} else {
-					// Compound last stage — propagate to all direct commands in it.
-					// Use lastPipeStageIdx (set in walkBinaryCmd just before the last
-					// stage was walked) to find only the commands from that stage.
-					// This correctly handles nested pipelines inside the compound, e.g.
-					// cmd1 | { cmd2 | cmd3; } > out — only cmd2 and cmd3 get the redirect.
-					startIdx := ws.lastPipeStageIdx
-					for i := startIdx; i < len(ws.results); i++ {
+					// Compound last stage — propagate to all direct commands whose
+					// AST position falls within the last stage's span. This avoids
+					// mutable walker state that nested pipelines could clobber.
+					stageStart := lastStage.Cmd.Pos().Offset()
+					stageEnd := lastStage.Cmd.End().Offset()
+					for i := directIdx; i < len(ws.results); i++ {
 						r := &ws.results[i]
-						if r.RawNode != nil && !r.Context.InSubstitution {
+						if r.RawNode == nil || r.Context.InSubstitution {
+							continue
+						}
+						nodeStart := r.RawNode.Pos().Offset()
+						nodeEnd := r.RawNode.End().Offset()
+						if nodeStart >= stageStart && nodeEnd <= stageEnd {
 							r.Redirects = append(r.Redirects, redirs...)
 						}
 					}
@@ -391,12 +389,6 @@ func walkBinaryCmd(ws *walkerState, bc *syntax.BinaryCmd) {
 		stages := collectPipelineStages(bc)
 		for i, stmt := range stages {
 			pos := i + 1 // 1-indexed: 1 = first stage, 2+ = subsequent
-			if i == len(stages)-1 {
-				// Record the index where the last stage's commands will start.
-				// walkStmt uses this to attach redirects to the correct commands
-				// when the last stage is compound (e.g., cmd1 | { cmd2 | cmd3; } > out).
-				ws.lastPipeStageIdx = len(ws.results)
-			}
 			ws.pipelineStack = append(ws.pipelineStack, pos)
 			ws.parentOpStack = append(ws.parentOpStack, pipeOp)
 			walkStmt(ws, stmt)
