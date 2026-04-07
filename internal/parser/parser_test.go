@@ -618,3 +618,37 @@ func TestWalkEnvPrefixWithFlags(t *testing.T) {
 		t.Errorf("expected name=ls after env flags, got %q", infos[0].Name)
 	}
 }
+
+func TestWalkSubcommandGlobalFlagSkipping(t *testing.T) {
+	tests := []struct {
+		cmd     string
+		wantSub string
+	}{
+		{"git -C /tmp status", "status"},
+		{"git --no-pager log", "log"},
+		{"git --git-dir=/tmp/.git status", "status"},
+		{"docker --context remote ps", "ps"},
+		{"docker -H unix:///var/run/docker.sock ps", "ps"},
+		{"gh --repo owner/repo pr list", "pr"},
+		{"gh -R owner/repo issue create", "issue"},
+		{"kubectl --namespace kube-system get pods", "get"},
+		{"kubectl -n default describe pod foo", "describe"},
+		{"git -- status", ""},           // -- terminates: status is arg, not subcmd
+		{"git -C /tmp -- status", ""},   // -- after global flag
+		{"ls -la /tmp", "/tmp"},         // no global flag map; first positional (/tmp) becomes subcommand (rule engine ignores it for commands without subcommand rules)
+	}
+	for _, tc := range tests {
+		t.Run(tc.cmd, func(t *testing.T) {
+			infos, err := ParseAndWalk(tc.cmd, "bash")
+			if err != nil {
+				t.Fatalf("error: %v", err)
+			}
+			if len(infos) == 0 {
+				t.Fatal("expected at least 1 command")
+			}
+			if infos[0].Subcommand != tc.wantSub {
+				t.Errorf("subcommand = %q, want %q", infos[0].Subcommand, tc.wantSub)
+			}
+		})
+	}
+}

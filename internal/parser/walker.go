@@ -344,7 +344,7 @@ func (ws *walkerState) extractCallExpr(ce *syntax.CallExpr) {
 
 	env := extractEnv(ce.Assigns)
 	name, remainingArgs := resolveCommand(ce.Args, 0)
-	flags, positional, subcommand := classifyArgs(remainingArgs)
+	flags, positional, subcommand := classifyArgs(name, remainingArgs)
 
 	ctx := ws.currentContext()
 
@@ -542,12 +542,39 @@ func skipSudoFlags(args []*syntax.Word) []*syntax.Word {
 	return args
 }
 
+// knownGlobalFlags maps command names to their global flags and how many
+// arguments each flag consumes. Commands not in this map have no special
+// global flag handling.
+var knownGlobalFlags = map[string]map[string]int{
+	"git": {
+		"-C": 1, "--git-dir": 1, "--work-tree": 1,
+		"--no-pager": 0, "--bare": 0, "--no-replace-objects": 0,
+	},
+	"docker": {
+		"--context": 1, "-c": 1, "--host": 1, "-H": 1,
+		"--log-level": 1, "-l": 1, "--tls": 0, "--tlsverify": 0,
+		"--config": 1, "-D": 0, "--debug": 0,
+	},
+	"gh": {
+		"--repo": 1, "-R": 1,
+	},
+	"kubectl": {
+		"--context": 1, "--namespace": 1, "-n": 1,
+		"--cluster": 1, "--user": 1, "--kubeconfig": 1,
+		"-s": 1, "--server": 1,
+	},
+}
+
 // classifyArgs splits args into flags, positional args, and the subcommand.
-func classifyArgs(args []*syntax.Word) (flags []string, positional []string, subcommand string) {
+// cmdName is used to look up known global flags that should be skipped
+// (along with their arguments) when finding the subcommand.
+func classifyArgs(cmdName string, args []*syntax.Word) (flags []string, positional []string, subcommand string) {
 	endOfOptions := false
 	subcommandFound := false
+	globalFlags := knownGlobalFlags[cmdName]
 
-	for _, w := range args {
+	for i := 0; i < len(args); i++ {
+		w := args[i]
 		lit, ok := wordLiteral(w)
 		if !ok {
 			// Dynamic word — treat as positional.
@@ -567,6 +594,27 @@ func classifyArgs(args []*syntax.Word) (flags []string, positional []string, sub
 
 		if !endOfOptions && strings.HasPrefix(lit, "-") {
 			flags = append(flags, lit)
+
+			// If this is a known global flag that consumes arguments, skip them.
+			if globalFlags != nil {
+				// Check for --flag=value form.
+				flagName := lit
+				if idx := strings.Index(lit, "="); idx >= 0 {
+					flagName = lit[:idx]
+				}
+				if argc, known := globalFlags[flagName]; known && argc > 0 && !strings.Contains(lit, "=") {
+					// Skip the next `argc` args (they belong to this flag).
+					for j := 0; j < argc && i+1 < len(args); j++ {
+						i++
+						argLit, argOk := wordLiteral(args[i])
+						if argOk {
+							positional = append(positional, argLit)
+						} else {
+							positional = append(positional, wordToString(args[i]))
+						}
+					}
+				}
+			}
 			continue
 		}
 
