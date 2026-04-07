@@ -18,7 +18,7 @@ type CommandInfo struct {
 // RedirectInfo describes a single file redirection.
 type RedirectInfo struct {
 	Op   string // ">", ">>", "<", "2>", "&>", etc.
-	File string // Target filename
+	File string // Redirect target operand (filename, fd, or dynamic word)
 }
 
 // CommandContext describes where a command appears in the AST structure.
