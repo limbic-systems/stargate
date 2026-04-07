@@ -213,13 +213,20 @@ func walkStmt(ws *walkerState, stmt *syntax.Stmt) {
 			}
 		case *syntax.BinaryCmd:
 			// For pipelines (cmd1 | cmd2 > out), attach to the last stage's
-			// direct command. Walk backwards, excluding commands inside $()
-			// substitutions to avoid misattributing redirects.
-			for i := len(ws.results) - 1; i >= directIdx; i-- {
-				r := &ws.results[i]
-				if r.RawNode != nil && r.Context.PipelinePosition > 0 && !r.Context.InSubstitution {
-					r.Redirects = append(r.Redirects, redirs...)
-					break
+			// direct command — but only if the last stage is a simple CallExpr.
+			// Compound last stages (subshells, if/while) own their redirects.
+			bc := stmt.Cmd.(*syntax.BinaryCmd)
+			stages := collectPipelineStages(bc)
+			if len(stages) > 0 {
+				lastStage := stages[len(stages)-1]
+				if ce, ok := lastStage.Cmd.(*syntax.CallExpr); ok {
+					// Find the CommandInfo for this specific CallExpr.
+					for i := len(ws.results) - 1; i >= directIdx; i-- {
+						if ws.results[i].RawNode == ce {
+							ws.results[i].Redirects = append(ws.results[i].Redirects, redirs...)
+							break
+						}
+					}
 				}
 			}
 		default:
@@ -542,14 +549,11 @@ func skipWrapperArgs(args []*syntax.Word, def WrapperDef) []*syntax.Word {
 
 		// Flag token.
 		if strings.HasPrefix(lit, "-") {
-			flagName := lit
-			if idx := strings.Index(lit, "="); idx >= 0 {
-				flagName = lit[:idx]
-			}
+			flagName, _, hasEq := strings.Cut(lit, "=")
 			args = args[1:]
 			// Consume extra positional arguments this flag takes (only when not --flag=val form).
 			if def.Flags != nil {
-				if argc, known := def.Flags[flagName]; known && argc > 0 && !strings.Contains(lit, "=") {
+				if argc, known := def.Flags[flagName]; known && argc > 0 && !hasEq {
 					for j := 0; j < argc && len(args) > 0; j++ {
 						args = args[1:]
 					}
@@ -609,12 +613,8 @@ func classifyArgs(cmdName string, args []*syntax.Word, commandFlags map[string]m
 
 			// If this is a known global flag that consumes arguments, skip them.
 			if globalFlags != nil {
-				// Check for --flag=value form.
-				flagName := lit
-				if idx := strings.Index(lit, "="); idx >= 0 {
-					flagName = lit[:idx]
-				}
-				if argc, known := globalFlags[flagName]; known && argc > 0 && !strings.Contains(lit, "=") {
+				flagName, _, hasEq := strings.Cut(lit, "=")
+				if argc, known := globalFlags[flagName]; known && argc > 0 && !hasEq {
 					// Skip the next `argc` args — they belong to this global
 					// flag and are not positional arguments for the command.
 					for j := 0; j < argc && i+1 < len(args); j++ {
