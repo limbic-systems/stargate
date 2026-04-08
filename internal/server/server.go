@@ -75,12 +75,6 @@ func (s *Server) handleClassify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cfg := s.cfg.Load()
-	if cfg.Classifier.MaxCommandLength > 0 && len(req.Command) > cfg.Classifier.MaxCommandLength {
-		writeJSONError(w, http.StatusRequestEntityTooLarge, "command exceeds maximum allowed length")
-		return
-	}
-
 	resp := s.clf.Classify(req)
 
 	w.Header().Set("Content-Type", "application/json")

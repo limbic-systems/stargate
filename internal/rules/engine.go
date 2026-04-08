@@ -135,6 +135,7 @@ func (e *Engine) Evaluate(cmds []CommandInfo, rawCommand string) *Result {
 				Rule: &MatchedRule{
 					Level:  "green",
 					Reason: "all commands matched green rules",
+					Index:  -1, // composite match — no single rule
 				},
 			}
 		}
@@ -241,8 +242,12 @@ func matchRule(cr *compiledRule, cmd *CommandInfo, rawCommand string) bool {
 		}
 	}
 
-	// 7. resolve — skip in M2
-	// (return true if no resolve field is checked here)
+	// 7. resolve — not implemented until M3. Rules with a resolve field
+	// do NOT match until resolvers are available. This prevents false-GREEN
+	// classifications for scope-gated rules (e.g., curl/gh) during M2.
+	if r.Resolve != nil {
+		return false
+	}
 
 	// 8. pattern
 	if cr.pattern != nil {

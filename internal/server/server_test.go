@@ -234,6 +234,27 @@ func TestClassifyASTSummary(t *testing.T) {
 	}
 }
 
+func TestClassifyOversizedCommand(t *testing.T) {
+	cfg := testConfig()
+	cfg.Classifier.MaxCommandLength = 20 // very small limit for testing
+	srv := server.New(cfg)
+
+	// Command exceeds limit — should get a RED classification (not HTTP 413).
+	code, resp := postClassify(t, srv, `{"command":"echo this is a command that exceeds the limit"}`)
+	if code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (classifier handles length, not HTTP layer)", code)
+	}
+	if resp.Decision != "red" {
+		t.Errorf("decision = %q, want red", resp.Decision)
+	}
+	if resp.Action != "block" {
+		t.Errorf("action = %q, want block", resp.Action)
+	}
+	if !strings.Contains(resp.Reason, "exceeds maximum length") {
+		t.Errorf("reason = %q, want it to mention length", resp.Reason)
+	}
+}
+
 func TestClassifyInvalidJSON(t *testing.T) {
 	srv := server.New(testConfig())
 

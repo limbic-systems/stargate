@@ -7,4 +7,3 @@ echo hello	green
 pwd	green
 go test ./...	green
 mkdir -p /tmp/test	green
-curl https://example.com	green
