@@ -131,9 +131,9 @@ func parseOwnerRepo(s string) (string, bool) {
 // ownerFromGitConfig reads .git/config in cwd and extracts the owner from
 // the "origin" remote URL. Only GitHub URLs are supported.
 func ownerFromGitConfig(ctx context.Context, cwd string) (string, bool, error) {
-	// Refuse to resolve relative to the process working directory when cwd is
-	// empty — that would silently read a .git/config we didn't intend.
-	if cwd == "" {
+	// Require an absolute CWD to prevent resolving .git/config relative to the
+	// server process directory. CWD is user-provided via the HTTP API.
+	if cwd == "" || !filepath.IsAbs(cwd) {
 		return "", false, nil
 	}
 

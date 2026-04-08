@@ -66,10 +66,10 @@ type MatchedRule struct {
 }
 
 // NewEngine compiles rules from config and returns an Engine.
-// The optional scopeMatcher and resolverProvider enable contextual trust
-// resolution for rules with a resolve field. If nil, rules with resolve
-// will not match (fail-closed).
-// Returns an error if any rule has both command and commands set,
+// scopeMatcher and resolverProvider enable contextual trust resolution for
+// rules with a resolve field. If any rule has a resolve field and either
+// dependency is nil, NewEngine returns an error.
+// Also returns an error if any rule has both command and commands set,
 // if a regex pattern fails to compile, or if a rule references an
 // undefined scope or resolver.
 func NewEngine(cfg *config.Config, scopeMatcher ScopeMatcher, resolverProvider ResolverProvider) (*Engine, error) {
