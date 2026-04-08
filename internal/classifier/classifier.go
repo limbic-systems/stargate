@@ -207,6 +207,7 @@ func (c *Classifier) Classify(req ClassifyRequest) *ClassifyResponse {
 			TotalMs: elapsed.Milliseconds(),
 		},
 		AST:     astSummary,
+		Context: req.Context,
 		Version: version,
 	}
 }
