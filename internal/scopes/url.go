@@ -66,8 +66,12 @@ func extractURLCandidate(arg string) (string, bool) {
 		return arg, true
 	}
 
-	// Schemeless candidate: contains a dot, no leading dash (flag), no leading slash (path).
-	if strings.Contains(arg, ".") && !strings.HasPrefix(arg, "-") && !strings.HasPrefix(arg, "/") {
+	// Schemeless candidate: contains a dot, not a flag, not a path.
+	if strings.Contains(arg, ".") &&
+		!strings.HasPrefix(arg, "-") &&
+		!strings.HasPrefix(arg, "/") &&
+		!strings.HasPrefix(arg, "./") &&
+		!strings.HasPrefix(arg, "../") {
 		// Skip args that look like filenames: no "/" in the arg and the suffix
 		// after the last "." is a known file extension.
 		if !strings.Contains(arg, "/") {

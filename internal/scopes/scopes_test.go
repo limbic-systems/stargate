@@ -38,7 +38,7 @@ func TestMatchGlob(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Single-star glob matches one path segment.
+	// Star glob: '*' matches any characters including dots (only '/' is a segment separator in doublestar).
 	if !r.Match("domains", "api.example.com") {
 		t.Error("expected 'api.example.com' to match '*.example.com'")
 	}

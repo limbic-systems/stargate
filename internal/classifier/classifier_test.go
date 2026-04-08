@@ -1,6 +1,7 @@
 package classifier_test
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -60,7 +61,7 @@ func newClassifier(t *testing.T) *classifier.Classifier {
 
 func TestClassifyGreen(t *testing.T) {
 	clf := newClassifier(t)
-	resp := clf.Classify(classifier.ClassifyRequest{Command: "git status"})
+	resp := clf.Classify(context.Background(), classifier.ClassifyRequest{Command: "git status"})
 	if resp.Decision != "green" {
 		t.Errorf("decision = %q, want green", resp.Decision)
 	}
@@ -71,7 +72,7 @@ func TestClassifyGreen(t *testing.T) {
 
 func TestClassifyRedRmRF(t *testing.T) {
 	clf := newClassifier(t)
-	resp := clf.Classify(classifier.ClassifyRequest{Command: "rm -rf /"})
+	resp := clf.Classify(context.Background(), classifier.ClassifyRequest{Command: "rm -rf /"})
 	if resp.Decision != "red" {
 		t.Errorf("decision = %q, want red", resp.Decision)
 	}
@@ -82,7 +83,7 @@ func TestClassifyRedRmRF(t *testing.T) {
 
 func TestClassifyYellowCurl(t *testing.T) {
 	clf := newClassifier(t)
-	resp := clf.Classify(classifier.ClassifyRequest{Command: "curl https://example.com"})
+	resp := clf.Classify(context.Background(), classifier.ClassifyRequest{Command: "curl https://example.com"})
 	if resp.Decision != "yellow" {
 		t.Errorf("decision = %q, want yellow", resp.Decision)
 	}
@@ -94,7 +95,7 @@ func TestClassifyYellowCurl(t *testing.T) {
 func TestClassifyParseError(t *testing.T) {
 	clf := newClassifier(t)
 	// Unclosed quote → parse error → fail-closed (red/block).
-	resp := clf.Classify(classifier.ClassifyRequest{Command: `echo "unterminated`})
+	resp := clf.Classify(context.Background(), classifier.ClassifyRequest{Command: `echo "unterminated`})
 	if resp.Decision != "red" {
 		t.Errorf("decision = %q, want red (parse error → fail-closed)", resp.Decision)
 	}
@@ -113,7 +114,7 @@ func TestClassifyExceedsMaxLength(t *testing.T) {
 	if err != nil {
 		t.Fatalf("classifier.New: %v", err)
 	}
-	resp := clf.Classify(classifier.ClassifyRequest{Command: "echo this is a very long command"})
+	resp := clf.Classify(context.Background(), classifier.ClassifyRequest{Command: "echo this is a very long command"})
 	if resp.Decision != "red" {
 		t.Errorf("decision = %q, want red (command too long)", resp.Decision)
 	}
@@ -124,7 +125,7 @@ func TestClassifyExceedsMaxLength(t *testing.T) {
 
 func TestClassifyTimingPopulated(t *testing.T) {
 	clf := newClassifier(t)
-	resp := clf.Classify(classifier.ClassifyRequest{Command: "git status"})
+	resp := clf.Classify(context.Background(), classifier.ClassifyRequest{Command: "git status"})
 	if resp.Timing == nil {
 		t.Fatal("timing is nil")
 	}
@@ -136,7 +137,7 @@ func TestClassifyTimingPopulated(t *testing.T) {
 
 func TestClassifyASTSummaryCommandsFound(t *testing.T) {
 	clf := newClassifier(t)
-	resp := clf.Classify(classifier.ClassifyRequest{Command: "git status"})
+	resp := clf.Classify(context.Background(), classifier.ClassifyRequest{Command: "git status"})
 	if resp.AST == nil {
 		t.Fatal("ast is nil")
 	}
@@ -147,7 +148,7 @@ func TestClassifyASTSummaryCommandsFound(t *testing.T) {
 
 func TestClassifyASTSummaryHasPipes(t *testing.T) {
 	clf := newClassifier(t)
-	resp := clf.Classify(classifier.ClassifyRequest{Command: "ls | grep foo"})
+	resp := clf.Classify(context.Background(), classifier.ClassifyRequest{Command: "ls | grep foo"})
 	if resp.AST == nil {
 		t.Fatal("ast is nil")
 	}
@@ -158,7 +159,7 @@ func TestClassifyASTSummaryHasPipes(t *testing.T) {
 
 func TestClassifyASTSummaryHasSubstitutions(t *testing.T) {
 	clf := newClassifier(t)
-	resp := clf.Classify(classifier.ClassifyRequest{Command: "echo $(ls)"})
+	resp := clf.Classify(context.Background(), classifier.ClassifyRequest{Command: "echo $(ls)"})
 	if resp.AST == nil {
 		t.Fatal("ast is nil")
 	}
@@ -169,7 +170,7 @@ func TestClassifyASTSummaryHasSubstitutions(t *testing.T) {
 
 func TestClassifyTraceIDFormat(t *testing.T) {
 	clf := newClassifier(t)
-	resp := clf.Classify(classifier.ClassifyRequest{Command: "git status"})
+	resp := clf.Classify(context.Background(), classifier.ClassifyRequest{Command: "git status"})
 	if !strings.HasPrefix(resp.StargateTrID, "sg_tr_") {
 		t.Errorf("trace ID %q does not start with sg_tr_", resp.StargateTrID)
 	}
@@ -184,7 +185,7 @@ func TestClassifyTraceIDUnique(t *testing.T) {
 	clf := newClassifier(t)
 	seen := make(map[string]bool)
 	for range 20 {
-		resp := clf.Classify(classifier.ClassifyRequest{Command: "git status"})
+		resp := clf.Classify(context.Background(), classifier.ClassifyRequest{Command: "git status"})
 		if seen[resp.StargateTrID] {
 			t.Errorf("duplicate trace ID %q generated", resp.StargateTrID)
 		}
@@ -194,7 +195,7 @@ func TestClassifyTraceIDUnique(t *testing.T) {
 
 func TestClassifyVersionField(t *testing.T) {
 	clf := newClassifier(t)
-	resp := clf.Classify(classifier.ClassifyRequest{Command: "git status"})
+	resp := clf.Classify(context.Background(), classifier.ClassifyRequest{Command: "git status"})
 	if resp.Version == "" {
 		t.Error("version field is empty")
 	}
@@ -202,7 +203,7 @@ func TestClassifyVersionField(t *testing.T) {
 
 func TestClassifyLLMReviewNilInM2(t *testing.T) {
 	clf := newClassifier(t)
-	resp := clf.Classify(classifier.ClassifyRequest{Command: "git status"})
+	resp := clf.Classify(context.Background(), classifier.ClassifyRequest{Command: "git status"})
 	if resp.LLMReview != nil {
 		t.Error("llm_review should be nil in M2")
 	}
@@ -210,7 +211,7 @@ func TestClassifyLLMReviewNilInM2(t *testing.T) {
 
 func TestClassifyUnknownDefaultYellow(t *testing.T) {
 	clf := newClassifier(t)
-	resp := clf.Classify(classifier.ClassifyRequest{Command: "unknown_tool_xyz"})
+	resp := clf.Classify(context.Background(), classifier.ClassifyRequest{Command: "unknown_tool_xyz"})
 	if resp.Decision != "yellow" {
 		t.Errorf("decision = %q, want yellow (default for unknown commands)", resp.Decision)
 	}

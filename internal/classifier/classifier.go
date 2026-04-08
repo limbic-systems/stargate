@@ -152,7 +152,7 @@ func New(cfg *config.Config) (*Classifier, error) {
 
 // Classify runs the classification pipeline and returns a response.
 // It never returns nil.
-func (c *Classifier) Classify(req ClassifyRequest) *ClassifyResponse {
+func (c *Classifier) Classify(ctx context.Context, req ClassifyRequest) *ClassifyResponse {
 	start := time.Now()
 	traceID := newTraceID()
 
@@ -209,7 +209,7 @@ func (c *Classifier) Classify(req ClassifyRequest) *ClassifyResponse {
 	// so they fail GREEN and fall to YELLOW/default. RED rules still fire for
 	// other commands in the same input (e.g., "$(echo rm); rm -rf /").
 	rulesStart := time.Now()
-	result := c.engine.Evaluate(context.Background(), cmds, req.Command, req.CWD)
+	result := c.engine.Evaluate(ctx, cmds, req.Command, req.CWD)
 	resp.Timing.RulesUs = time.Since(rulesStart).Microseconds()
 
 	// 5. Apply unresolvable_expansion policy.
