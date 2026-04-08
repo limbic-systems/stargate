@@ -3,7 +3,9 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -79,7 +81,7 @@ func (s *Server) handleClassify(w http.ResponseWriter, r *http.Request) {
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&req); err != nil {
 		// Distinguish oversized payloads from malformed JSON.
-		if err.Error() == "http: request body too large" {
+		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			writeJSONError(w, http.StatusRequestEntityTooLarge, "request body too large")
 			return
 		}
@@ -87,8 +89,11 @@ func (s *Server) handleClassify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Reject trailing data after the JSON object.
-	if dec.More() {
+	// Reject trailing top-level data after the JSON object.
+	// dec.More() only checks within containers; a second Decode that
+	// returns io.EOF confirms nothing else follows.
+	var extra json.RawMessage
+	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
 		writeJSONError(w, http.StatusBadRequest, "unexpected trailing data after JSON object")
 		return
 	}

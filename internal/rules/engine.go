@@ -49,8 +49,19 @@ type MatchedRule struct {
 // Returns an error if any rule has both command and commands set,
 // or if a regex pattern fails to compile.
 func NewEngine(cfg *config.Config) (*Engine, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("rules: config must not be nil")
+	}
+	defDecision := cfg.Classifier.DefaultDecision
+	if defDecision == "" {
+		defDecision = "yellow" // fail-closed default
+	}
+	validDecisions := map[string]bool{"red": true, "yellow": true, "green": true}
+	if !validDecisions[defDecision] {
+		return nil, fmt.Errorf("rules: invalid default_decision %q", defDecision)
+	}
 	e := &Engine{
-		defaultDecision: cfg.Classifier.DefaultDecision,
+		defaultDecision: defDecision,
 	}
 
 	var err error
@@ -83,9 +94,13 @@ func compileRules(rules []config.Rule, level string) ([]compiledRule, error) {
 			}
 		}
 		// Normalize scope at compile time: clean path and ensure trailing /.
+		// Reject relative scopes — they can never match absolute path arguments.
 		var normScope string
 		if r.Scope != "" {
 			normScope = filepath.Clean(r.Scope)
+			if !filepath.IsAbs(normScope) {
+				return nil, fmt.Errorf("rules.%s[%d]: scope %q must be an absolute path", level, i, r.Scope)
+			}
 			if normScope != "/" && !strings.HasSuffix(normScope, "/") {
 				normScope += "/"
 			}
