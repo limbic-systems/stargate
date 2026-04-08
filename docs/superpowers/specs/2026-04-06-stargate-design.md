@@ -939,6 +939,15 @@ Stargate's architecture cleanly separates the **classification API** (agent-agno
 
 The core HTTP endpoint served by `stargate serve`. Agent-agnostic and stateless.
 
+#### Handler Behavior
+
+The `/classify` handler enforces strict input validation before invoking the classifier:
+
+- **Body size limit:** `http.MaxBytesReader` bounds the request body to `4 × max_command_length` (minimum 1MB). This prevents memory exhaustion while ensuring the classifier (not the transport) handles oversized commands with a proper `ClassifyResponse`.
+- **Strict JSON parsing:** `json.Decoder.DisallowUnknownFields()` rejects requests with unexpected JSON fields. A second `Decode` call verifies no trailing data follows the JSON object (only `io.EOF` is accepted).
+- **Command normalization:** `strings.TrimSpace` is applied to the command field in the classifier (not the handler) so all entry points (HTTP, CLI, tests) behave consistently. The handler validates the trimmed command is non-empty.
+- **Classification, not HTTP errors, for policy violations:** Commands exceeding `max_command_length`, parse failures, and AST depth violations are returned as `200 OK` with a RED `ClassifyResponse` (not as 4xx/5xx errors). This ensures clients always receive a structured response with trace ID and timing.
+
 #### Request Schema
 
 ```jsonc

@@ -761,6 +761,40 @@ git commit -m "feat(parser): subcommand extraction with global flag skipping"
 
 Goal: Load rules from TOML config, match against CommandInfo, and wire `/classify` to return decisions.
 
+> **M2 Retrospective (post-implementation):** 23 commits, 61 review threads,
+> ~12 rounds of feedback across Copilot and CodeRabbit. Significantly better
+> than M1 (84 threads, 20 rounds) thanks to the pre-implementation design
+> verification with the expert panel. The review tail was driven by three
+> categories:
+>
+> 1. **API schema conformance** — 8 threads. The ClassifyResponse shape drifted
+>    from the spec during implementation: missing fields (feedback_token, corpus,
+>    llm_ms, context enum), wrong types (TotalMs int64 vs float64), omitempty
+>    vs null semantics, AST MaxDepth 0-based vs 1-based. **Lesson:** Build the
+>    response struct from the spec schema directly, field by field, at the start.
+>    Add forward-compatible nil fields for features not yet implemented.
+>
+> 2. **HTTP handler hardening** — 6 threads. MaxBytesReader, DisallowUnknownFields,
+>    trailing-data rejection, error message matching spec, MaxBytesError type
+>    detection, TrimSpace centralization. **Lesson:** The /classify handler is a
+>    security boundary. Spec the handler behavior (body limits, strict parsing,
+>    normalization) as explicitly as the classification pipeline.
+>
+> 3. **Engine edge cases** — 5 threads. Resolve-gated rules false-GREEN, YELLOW
+>    evaluating GREEN-matched commands, unresolvable short-circuit bypassing RED,
+>    scope normalization at compile time, context validation. **Lesson:** The
+>    pre-implementation panel caught the big design decisions (flag decomposition,
+>    scope semantics), but engine implementation details (YELLOW skip logic,
+>    resolve stub behavior) still surfaced during code review.
+>
+> **What the design verification prevented:** The panel review eliminated flag
+> normalization ambiguity, scope path-prefix bugs, and pattern evasion concerns
+> BEFORE implementation. Without it, those would have added ~20 more threads.
+>
+> **For future milestones:** Spec the HTTP handler behavior alongside the
+> classification pipeline. Build response structs from the spec schema verbatim.
+> Use `--paginate` on all GitHub API list queries.
+
 ### Task 2.1: Rule compilation and RED matching
 
 **Files:**
