@@ -107,59 +107,48 @@ func (c *Classifier) Classify(req ClassifyRequest) *ClassifyResponse {
 	start := time.Now()
 	traceID := newTraceID()
 
+	// Base response — common fields populated once so no early-return path
+	// can accidentally omit them (e.g., Context echo, trace ID, version).
+	resp := &ClassifyResponse{
+		StargateTrID: traceID,
+		Context:      req.Context,
+		Timing:       &Timing{},
+		AST:          &ASTSummary{},
+		Version:      version,
+	}
+
+	finalize := func() *ClassifyResponse {
+		resp.Timing.TotalMs = time.Since(start).Milliseconds()
+		return resp
+	}
+
 	// 1. Command length guard.
 	if c.maxCmdLen > 0 && len(req.Command) > c.maxCmdLen {
-		elapsed := time.Since(start)
-		return &ClassifyResponse{
-			Decision:     "red",
-			Action:       "block",
-			Reason:       fmt.Sprintf("command exceeds maximum length (%d > %d bytes)", len(req.Command), c.maxCmdLen),
-			StargateTrID: traceID,
-			Timing: &Timing{
-				TotalMs: elapsed.Milliseconds(),
-			},
-			AST:     &ASTSummary{},
-			Version: version,
-		}
+		resp.Decision = "red"
+		resp.Action = "block"
+		resp.Reason = fmt.Sprintf("command exceeds maximum length (%d > %d bytes)", len(req.Command), c.maxCmdLen)
+		return finalize()
 	}
 
 	// 2. Parse phase.
 	parseStart := time.Now()
 	cmds, err := parser.ParseAndWalk(req.Command, c.dialect, c.walkerCfg)
-	parseUs := time.Since(parseStart).Microseconds()
+	resp.Timing.ParseUs = time.Since(parseStart).Microseconds()
 
 	if err != nil {
-		elapsed := time.Since(start)
-		return &ClassifyResponse{
-			Decision:     "red",
-			Action:       "block",
-			Reason:       fmt.Sprintf("parse error: %s", err.Error()),
-			StargateTrID: traceID,
-			Timing: &Timing{
-				ParseUs: parseUs,
-				TotalMs: elapsed.Milliseconds(),
-			},
-			AST:     &ASTSummary{},
-			Version: version,
-		}
+		resp.Decision = "red"
+		resp.Action = "block"
+		resp.Reason = fmt.Sprintf("parse error: %s", err.Error())
+		return finalize()
 	}
 
 	// 3. AST depth guard.
-	astSummary := buildASTSummary(cmds)
-	if c.maxASTDepth > 0 && astSummary.MaxDepth > c.maxASTDepth {
-		elapsed := time.Since(start)
-		return &ClassifyResponse{
-			Decision:     "red",
-			Action:       "block",
-			Reason:       fmt.Sprintf("AST depth %d exceeds limit %d", astSummary.MaxDepth, c.maxASTDepth),
-			StargateTrID: traceID,
-			Timing: &Timing{
-				ParseUs: parseUs,
-				TotalMs: elapsed.Milliseconds(),
-			},
-			AST:     astSummary,
-			Version: version,
-		}
+	resp.AST = buildASTSummary(cmds)
+	if c.maxASTDepth > 0 && resp.AST.MaxDepth > c.maxASTDepth {
+		resp.Decision = "red"
+		resp.Action = "block"
+		resp.Reason = fmt.Sprintf("AST depth %d exceeds limit %d", resp.AST.MaxDepth, c.maxASTDepth)
+		return finalize()
 	}
 
 	// 4. Rule engine evaluation.
@@ -168,7 +157,7 @@ func (c *Classifier) Classify(req ClassifyRequest) *ClassifyResponse {
 	// other commands in the same input (e.g., "$(echo rm); rm -rf /").
 	rulesStart := time.Now()
 	result := c.engine.Evaluate(cmds, req.Command)
-	rulesUs := time.Since(rulesStart).Microseconds()
+	resp.Timing.RulesUs = time.Since(rulesStart).Microseconds()
 
 	// 5. Apply unresolvable_expansion policy.
 	// If the engine returned a default decision (no rule matched) and any
@@ -193,23 +182,11 @@ func (c *Classifier) Classify(req ClassifyRequest) *ClassifyResponse {
 		}
 	}
 
-	elapsed := time.Since(start)
-
-	return &ClassifyResponse{
-		Decision:     result.Decision,
-		Action:       result.Action,
-		Reason:       result.Reason,
-		StargateTrID: traceID,
-		Rule:         result.Rule,
-		Timing: &Timing{
-			ParseUs: parseUs,
-			RulesUs: rulesUs,
-			TotalMs: elapsed.Milliseconds(),
-		},
-		AST:     astSummary,
-		Context: req.Context,
-		Version: version,
-	}
+	resp.Decision = result.Decision
+	resp.Action = result.Action
+	resp.Reason = result.Reason
+	resp.Rule = result.Rule
+	return finalize()
 }
 
 // buildASTSummary derives an ASTSummary from the parsed CommandInfo slice.
@@ -257,7 +234,7 @@ func newTraceID() string {
 	if _, err := rand.Read(b); err != nil {
 		// Fallback — deterministic 12 bytes from timestamp hash to preserve
 		// the fixed sg_tr_ + 24-hex-char format.
-		h := sha256.Sum256([]byte(fmt.Sprintf("%d", time.Now().UnixNano())))
+		h := sha256.Sum256(fmt.Appendf(nil, "%d", time.Now().UnixNano()))
 		copy(b, h[:12])
 	}
 	return "sg_tr_" + hex.EncodeToString(b)
