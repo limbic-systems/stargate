@@ -34,11 +34,18 @@ func ResolveGitHubRepoOwner(ctx context.Context, cmd rules.CommandInfo, cwd stri
 	}
 
 	// Step 2: Check args for gh api repos/owner/repo/... path.
-	if owner, ok := ownerFromAPIPath(cmd.Args); ok {
+	owner, ok, sawReposPath := ownerFromAPIPath(cmd.Args)
+	if ok {
 		return owner, true, nil
 	}
+	// If we found a repos/ path but couldn't parse it safely (traversal,
+	// invalid chars), do NOT fall back to .git/config — the command is
+	// targeting a specific repo via the API, just one we can't verify.
+	if sawReposPath {
+		return "", false, nil
+	}
 
-	// Step 3: Infer from .git/config.
+	// Step 3: Infer from .git/config (only when no explicit repo target found).
 	owner, ok, err := ownerFromGitConfig(ctx, cwd)
 	if err != nil {
 		return "", false, fmt.Errorf("github_repo_owner: git config: %w", err)
@@ -72,44 +79,46 @@ func ownerFromRepoFlag(flags []string) (string, bool) {
 
 // ownerFromAPIPath scans positional args for a GitHub API path like
 // repos/owner/repo/... and extracts the owner.
-func ownerFromAPIPath(args []string) (string, bool) {
+// ownerFromAPIPath extracts the owner from a gh api repos/owner/repo/... path.
+// Returns (owner, true, true) on success, ("", false, true) if a repos/ path
+// was found but invalid, or ("", false, false) if no repos/ path was found.
+func ownerFromAPIPath(args []string) (owner string, ok bool, sawReposPath bool) {
 	for _, arg := range args {
-		// URL-decode first to handle encoded characters.
 		decoded, err := url.PathUnescape(arg)
 		if err != nil {
 			continue
 		}
 
-		// Strip leading slash for /repos/... form.
 		path := strings.TrimPrefix(decoded, "/")
 
 		if !strings.HasPrefix(path, "repos/") {
 			continue
 		}
 
+		// Found a repos/ path — even if invalid, we saw it.
+		sawReposPath = true
+
 		segments := strings.Split(path, "/")
-		// Need at least: repos, owner, repo
 		if len(segments) < 3 {
-			continue
+			return "", false, true
 		}
 
-		// Validate no empty segments or traversal.
 		for _, seg := range segments {
 			if seg == "" || seg == ".." || seg == "." {
-				return "", false
+				return "", false, true
 			}
 		}
 
-		owner := segments[1]
+		o := segments[1]
 		repo := segments[2]
 
-		if !validGitHubName.MatchString(owner) || !validGitHubName.MatchString(repo) {
-			return "", false
+		if !validGitHubName.MatchString(o) || !validGitHubName.MatchString(repo) {
+			return "", false, true
 		}
 
-		return owner, true
+		return o, true, true
 	}
-	return "", false
+	return "", false, false
 }
 
 // parseOwnerRepo splits an "owner/repo" string and validates both parts.
