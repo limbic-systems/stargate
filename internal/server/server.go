@@ -73,7 +73,9 @@ func (s *Server) handleClassify(w http.ResponseWriter, r *http.Request) {
 	cfg := s.cfg.Load()
 	// Body limit must exceed MaxCommandLength to ensure the classifier (not the
 	// transport) handles oversized commands with a proper ClassifyResponse.
-	maxBody := max(int64(cfg.Classifier.MaxCommandLength)*4, 1<<20) // 4x headroom, min 1MB
+	// Cap the multiplied value to avoid int64 overflow on extreme configs.
+	cmdLen := min(int64(cfg.Classifier.MaxCommandLength), 1<<30) // cap at 1GB before multiply
+	maxBody := max(cmdLen*4, 1<<20)                               // 4x headroom, min 1MB
 	r.Body = http.MaxBytesReader(w, r.Body, maxBody)
 
 	var req classifier.ClassifyRequest

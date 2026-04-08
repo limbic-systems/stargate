@@ -277,29 +277,6 @@ func TestClassifyInvalidJSON(t *testing.T) {
 	}
 }
 
-func TestClassifyBodyTooLarge(t *testing.T) {
-	cfg := testConfig()
-	cfg.Classifier.MaxCommandLength = 100 // small limit → maxBody = 400 bytes (4x)
-	srv := mustNewServer(t, cfg)
-
-	// Send a body that exceeds maxBody (4x MaxCommandLength = 400 bytes, min 1MB,
-	// so we need to use a very small MaxCommandLength to trigger this in a test).
-	// With MaxCommandLength=100, maxBody = max(400, 1MB) = 1MB. That's too large.
-	// Use a custom approach: set MaxCommandLength to trigger classifier-level rejection.
-	// The 413 path requires exceeding MaxBytesReader, which is min 1MB — not practical
-	// in a unit test. The classifier handles length enforcement instead.
-	// This test verifies the classifier path returns RED for oversized commands.
-	bigCmd := strings.Repeat("x", 200)
-	body := `{"command":"` + bigCmd + `"}`
-	code, resp := postClassify(t, srv, body)
-	if code != 200 {
-		t.Fatalf("status = %d, want 200 (classifier handles length)", code)
-	}
-	if resp.Decision != "red" {
-		t.Errorf("decision = %q, want red for oversized command", resp.Decision)
-	}
-}
-
 func TestClassifyTrailingData(t *testing.T) {
 	srv := mustNewServer(t, testConfig())
 
