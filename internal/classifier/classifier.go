@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/perezd/stargate/internal/config"
@@ -107,6 +108,10 @@ func (c *Classifier) Classify(req ClassifyRequest) *ClassifyResponse {
 	start := time.Now()
 	traceID := newTraceID()
 
+	// Normalize command — owned by the classifier so all entry points
+	// (HTTP, CLI, tests) behave consistently.
+	req.Command = strings.TrimSpace(req.Command)
+
 	// Base response — common fields populated once so no early-return path
 	// can accidentally omit them (e.g., Context echo, trace ID, version).
 	resp := &ClassifyResponse{
@@ -138,7 +143,7 @@ func (c *Classifier) Classify(req ClassifyRequest) *ClassifyResponse {
 	if err != nil {
 		resp.Decision = "red"
 		resp.Action = "block"
-		resp.Reason = fmt.Sprintf("parse error: %s", err.Error())
+		resp.Reason = err.Error()
 		return finalize()
 	}
 
