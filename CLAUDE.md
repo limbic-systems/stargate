@@ -34,6 +34,33 @@ After merging a significant PR (typically a milestone), perform a design verific
 
 This protocol exists because M1 (Parser + Walker) demonstrated that underspecified design leads to long review tails (84 threads, 20 rounds). The cost of a 30-minute design verification pass is much lower than 20 rounds of implementation-time discovery.
 
+### PR Review Loop Protocol
+
+After a PR is created and pushed, run an automated review loop:
+
+1. **Dispatch a haiku polling subagent** that checks for unresolved review threads every 5 minutes:
+   ```bash
+   gh api graphql --paginate -f query='{ repository(owner: "perezd", name: "stargate") {
+     pullRequest(number: N) { reviewThreads(last: 50) { nodes { id isResolved } } }
+   } }' --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false)] | length'
+   ```
+   Report back when unresolved threads > 0 or a new Copilot review appears.
+
+2. **When unresolved threads are found**, the main agent:
+   - Reads ALL findings (use `--paginate` on all `gh api` list endpoints — reviews, comments, threads)
+   - Applies the `receiving-code-review` skill: evaluate each finding against the codebase, push back with technical reasoning where appropriate, fix what's valid
+   - Dispatches subagents for implementation fixes if needed
+   - Runs a self-review before pushing (go test, go vet, check for related issues in the same category)
+   - Pushes the branch
+   - Replies to and resolves each review thread via the GitHub API
+   - Re-requests Copilot review: `gh api repos/{owner}/{repo}/pulls/{n}/requested_reviewers -X POST -f 'reviewers[]=copilot-pull-request-reviewer[bot]'`
+
+3. **Re-dispatch the polling subagent** — return to step 1.
+
+4. **Terminal state:** Copilot's review says "generated no new comments" AND 0 unresolved threads → halt and await instructions.
+
+**Critical:** Always use `--paginate` on GitHub API list endpoints. Without it, reviews beyond the first page (30 items) are silently missed.
+
 ### Layer-Impact Assessment
 
 Before every modification, explicitly state:
