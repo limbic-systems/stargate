@@ -38,7 +38,12 @@ This protocol exists because M1 (Parser + Walker) demonstrated that underspecifi
 
 After a PR is created and pushed, run an automated review loop:
 
-1. **Dispatch a haiku polling subagent** that checks for unresolved review threads every 5 minutes:
+0. **Request initial Copilot review** immediately after creating the PR:
+   ```bash
+   gh api repos/limbic-systems/stargate/pulls/{N}/requested_reviewers -X POST -f 'reviewers[]=copilot-pull-request-reviewer[bot]'
+   ```
+
+1. **Poll for review feedback** — check for unresolved review threads every 5 minutes:
    ```bash
    gh api graphql --paginate -f query='{ repository(owner: "limbic-systems", name: "stargate") {
      pullRequest(number: N) { reviewThreads(last: 50) { nodes { id isResolved } } }
