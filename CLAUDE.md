@@ -43,13 +43,35 @@ After a PR is created and pushed, run an automated review loop:
    gh api repos/limbic-systems/stargate/pulls/{N}/requested_reviewers -X POST -f 'reviewers[]=copilot-pull-request-reviewer[bot]'
    ```
 
-1. **Poll for review feedback** — check for unresolved review threads every 5 minutes:
+1. **Poll for review feedback** — write a temporary bash script and dispatch a haiku subagent to run it. The script polls every 5 minutes and exits when it finds work. The subagent just runs the script and reports the output.
    ```bash
-   gh api graphql --paginate -f query='{ repository(owner: "limbic-systems", name: "stargate") {
-     pullRequest(number: N) { reviewThreads(last: 50) { nodes { id isResolved } } }
-   } }' --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false)] | length'
+   #!/bin/bash
+   # /tmp/poll-pr.sh — generated per PR, deleted after use
+   PR_NUM=$1
+   OWNER="limbic-systems"
+   REPO="stargate"
+   MAX_POLLS=6  # 30 minutes max
+
+   for i in $(seq 1 $MAX_POLLS); do
+     UNRESOLVED=$(gh api graphql --paginate -f query="{ repository(owner: \"$OWNER\", name: \"$REPO\") { pullRequest(number: $PR_NUM) { reviewThreads(last: 50) { nodes { id isResolved } } } } }" --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false)] | length')
+
+     COPILOT_MSG=$(gh api "repos/$OWNER/$REPO/pulls/$PR_NUM/reviews" --paginate --jq '[.[] | select(.user.login | test("copilot"))] | last | .body // ""')
+
+     if [ "$UNRESOLVED" -gt 0 ] 2>/dev/null; then
+       echo "FOUND: $UNRESOLVED unresolved threads"
+       exit 0
+     fi
+
+     if echo "$COPILOT_MSG" | grep -q "generated no new comments"; then
+       echo "TERMINAL: Copilot reports no new comments"
+       exit 0
+     fi
+
+     [ $i -lt $MAX_POLLS ] && sleep 300
+   done
+   echo "TIMEOUT: No reviews after $MAX_POLLS polls"
    ```
-   Report back when unresolved threads > 0 or a new Copilot review appears.
+   Dispatch haiku subagent with: "Run `/tmp/poll-pr.sh {N}` and report the output."
 
 2. **When unresolved threads are found**, the main agent:
    - Reads ALL findings (use `--paginate` on all `gh api` list endpoints — reviews, comments, threads)
