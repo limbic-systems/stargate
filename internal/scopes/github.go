@@ -131,6 +131,12 @@ func parseOwnerRepo(s string) (string, bool) {
 // ownerFromGitConfig reads .git/config in cwd and extracts the owner from
 // the "origin" remote URL. Only GitHub URLs are supported.
 func ownerFromGitConfig(ctx context.Context, cwd string) (string, bool, error) {
+	// Refuse to resolve relative to the process working directory when cwd is
+	// empty — that would silently read a .git/config we didn't intend.
+	if cwd == "" {
+		return "", false, nil
+	}
+
 	configPath := filepath.Join(cwd, ".git", "config")
 
 	// Check context before file I/O.
@@ -149,7 +155,10 @@ func ownerFromGitConfig(ctx context.Context, cwd string) (string, bool, error) {
 	}
 	defer f.Close()
 
-	remoteURL, ok := parseGitConfigOriginURL(f)
+	remoteURL, ok, err := parseGitConfigOriginURL(f)
+	if err != nil {
+		return "", false, err
+	}
 	if !ok {
 		return "", false, nil
 	}
@@ -162,8 +171,8 @@ func ownerFromGitConfig(ctx context.Context, cwd string) (string, bool, error) {
 }
 
 // parseGitConfigOriginURL reads an INI-style git config and extracts the URL
-// from [remote "origin"].
-func parseGitConfigOriginURL(f *os.File) (string, bool) {
+// from [remote "origin"]. Returns an error if the scanner encounters an I/O error.
+func parseGitConfigOriginURL(f *os.File) (string, bool, error) {
 	scanner := bufio.NewScanner(f)
 	inOrigin := false
 
@@ -187,12 +196,16 @@ func parseGitConfigOriginURL(f *os.File) (string, bool) {
 				continue
 			}
 			if strings.TrimSpace(key) == "url" {
-				return strings.TrimSpace(value), true
+				return strings.TrimSpace(value), true, nil
 			}
 		}
 	}
 
-	return "", false
+	if err := scanner.Err(); err != nil {
+		return "", false, err
+	}
+
+	return "", false, nil
 }
 
 // ownerFromGitURL parses a GitHub remote URL and extracts the owner.

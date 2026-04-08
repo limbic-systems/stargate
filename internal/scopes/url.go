@@ -2,18 +2,29 @@ package scopes
 
 import (
 	"context"
-	"net"
 	"net/url"
 	"strings"
 
 	"github.com/limbic-systems/stargate/internal/rules"
 )
 
-// rejectedSchemes lists URL schemes that are not network-accessible and must
-// be rejected by the url_domain resolver.
-var rejectedSchemes = map[string]bool{
-	"file": true,
-	"data": true,
+// acceptedSchemes lists the only URL schemes accepted by the url_domain resolver.
+// Everything else (file:, data:, ftp:, ssh:, etc.) is rejected.
+var acceptedSchemes = map[string]bool{
+	"http":  true,
+	"https": true,
+}
+
+// commonFileExts lists common file extensions that indicate a filename rather
+// than a domain name. Used to avoid false-positives on args like "output.txt".
+var commonFileExts = map[string]bool{
+	"txt": true, "log": true, "json": true, "yaml": true, "yml": true,
+	"xml": true, "csv": true, "tsv": true, "md": true, "html": true,
+	"htm": true, "pdf": true, "png": true, "jpg": true, "jpeg": true,
+	"gif": true, "svg": true, "zip": true, "tar": true, "gz": true,
+	"sh": true, "py": true, "go": true, "js": true, "ts": true,
+	"conf": true, "cfg": true, "ini": true, "toml": true, "env": true,
+	"out": true, "tmp": true, "bak": true,
 }
 
 // ResolveURLDomain extracts the domain (host without port) from the first
@@ -24,7 +35,8 @@ var rejectedSchemes = map[string]bool{
 //  2. An arg containing "." and not starting with "-" is treated as a schemeless
 //     domain and is prepended with "https://" before parsing.
 //
-// Rejected schemes (file:, data:, etc.) and args with no URL return unresolvable.
+// Only http and https schemes are accepted; all others return unresolvable.
+// Schemeless args that look like filenames (e.g., "output.txt") are skipped.
 func ResolveURLDomain(_ context.Context, cmd rules.CommandInfo, _ string) (string, bool, error) {
 	for _, arg := range cmd.Args {
 		raw, ok := extractURLCandidate(arg)
@@ -34,11 +46,9 @@ func ResolveURLDomain(_ context.Context, cmd rules.CommandInfo, _ string) (strin
 
 		domain, ok := parseURLDomain(raw)
 		if !ok {
-			// Explicit scheme that we reject → stop and return unresolvable.
-			// (If it looked like a URL but failed to parse, keep scanning.)
-			if strings.Contains(arg, "://") {
-				return "", false, nil
-			}
+			// Parse failure for a schemed URL — continue scanning remaining args
+			// rather than stopping. (A rejected scheme or unparseable URL should
+			// not prevent a later arg from matching.)
 			continue
 		}
 
@@ -58,6 +68,17 @@ func extractURLCandidate(arg string) (string, bool) {
 
 	// Schemeless candidate: contains a dot, no leading dash (flag), no leading slash (path).
 	if strings.Contains(arg, ".") && !strings.HasPrefix(arg, "-") && !strings.HasPrefix(arg, "/") {
+		// Skip args that look like filenames: no "/" in the arg and the suffix
+		// after the last "." is a known file extension.
+		if !strings.Contains(arg, "/") {
+			lastDot := strings.LastIndex(arg, ".")
+			if lastDot >= 0 {
+				ext := strings.ToLower(arg[lastDot+1:])
+				if commonFileExts[ext] {
+					return "", false
+				}
+			}
+		}
 		return "https://" + arg, true
 	}
 
@@ -65,28 +86,21 @@ func extractURLCandidate(arg string) (string, bool) {
 }
 
 // parseURLDomain parses a raw URL and returns the host without port.
-// Returns ("", false) if the scheme is rejected or the URL is unparseable.
+// Returns ("", false) if the scheme is not http/https or the URL is unparseable.
 func parseURLDomain(raw string) (string, bool) {
 	u, err := url.Parse(raw)
 	if err != nil || u.Host == "" {
 		return "", false
 	}
 
-	// Reject non-network schemes.
-	if rejectedSchemes[strings.ToLower(u.Scheme)] {
+	// Only accept http and https schemes.
+	if !acceptedSchemes[strings.ToLower(u.Scheme)] {
 		return "", false
 	}
 
-	host := u.Host
-
-	// Strip port using net.SplitHostPort; fall back to the raw host on error
-	// (e.g., plain "example.com" without a port is not valid for SplitHostPort).
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		host = h
-	}
-
-	// net.SplitHostPort strips brackets from IPv6 literals like [::1].
-	// Return the bare address so callers get "::1" rather than "[::1]".
+	// u.Hostname() correctly strips brackets from IPv6 literals like [::1]
+	// and strips the port if present.
+	host := u.Hostname()
 
 	if host == "" {
 		return "", false

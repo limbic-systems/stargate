@@ -3,6 +3,7 @@
 package classifier
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -102,7 +103,7 @@ type CommandSummary struct {
 	Args       []string `json:"args,omitempty"`
 }
 
-const version = "m2"
+const version = "m3"
 
 // resolverAdapter wraps *scopes.ResolverRegistry to satisfy rules.ResolverProvider.
 // This avoids a circular import between rules and scopes packages.
@@ -122,16 +123,15 @@ func (a *resolverAdapter) Get(name string) (rules.ResolverFunc, bool) {
 // Returns an error if the rule engine cannot be compiled.
 func New(cfg *config.Config) (*Classifier, error) {
 	// Build scope and resolver registries for contextual trust resolution.
-	var scopeMatcher rules.ScopeMatcher
-	var resolverProvider rules.ResolverProvider
-	if len(cfg.Scopes) > 0 {
-		reg, err := scopes.NewRegistry(cfg.Scopes)
-		if err != nil {
-			return nil, fmt.Errorf("classifier: build scope registry: %w", err)
-		}
-		scopeMatcher = reg
-		resolverProvider = &resolverAdapter{rr: scopes.DefaultResolverRegistry()}
+	// Always create registries even when no scopes are configured — an empty
+	// registry is valid and causes resolve rules to fail the Has check at
+	// engine validation time (a clear config error), rather than panicking.
+	reg, err := scopes.NewRegistry(cfg.Scopes)
+	if err != nil {
+		return nil, fmt.Errorf("classifier: build scope registry: %w", err)
 	}
+	var scopeMatcher rules.ScopeMatcher = reg
+	var resolverProvider rules.ResolverProvider = &resolverAdapter{rr: scopes.DefaultResolverRegistry()}
 
 	eng, err := rules.NewEngine(cfg, scopeMatcher, resolverProvider)
 	if err != nil {
@@ -209,7 +209,7 @@ func (c *Classifier) Classify(req ClassifyRequest) *ClassifyResponse {
 	// so they fail GREEN and fall to YELLOW/default. RED rules still fire for
 	// other commands in the same input (e.g., "$(echo rm); rm -rf /").
 	rulesStart := time.Now()
-	result := c.engine.Evaluate(cmds, req.Command, req.CWD)
+	result := c.engine.Evaluate(context.Background(), cmds, req.Command, req.CWD)
 	resp.Timing.RulesUs = time.Since(rulesStart).Microseconds()
 
 	// 5. Apply unresolvable_expansion policy.

@@ -187,11 +187,11 @@ func compileRules(rules []config.Rule, level string) ([]compiledRule, error) {
 }
 
 // Evaluate runs the RED/GREEN/YELLOW pipeline and returns a classification.
-func (e *Engine) Evaluate(cmds []CommandInfo, rawCommand string, cwd string) *Result {
+func (e *Engine) Evaluate(ctx context.Context, cmds []CommandInfo, rawCommand string, cwd string) *Result {
 	// Phase 1: RED — any match returns immediately.
 	for i := range cmds {
 		for j := range e.red {
-			if e.matchRule(&e.red[j], &cmds[i], rawCommand, cwd) {
+			if e.matchRule(ctx, &e.red[j], &cmds[i], rawCommand, cwd) {
 				return &Result{
 					Decision: "red",
 					Action:   "block",
@@ -213,7 +213,7 @@ func (e *Engine) Evaluate(cmds []CommandInfo, rawCommand string, cwd string) *Re
 		allGreen := true
 		for i := range cmds {
 			for j := range e.green {
-				if e.matchRule(&e.green[j], &cmds[i], rawCommand, cwd) {
+				if e.matchRule(ctx, &e.green[j], &cmds[i], rawCommand, cwd) {
 					greenMatched[i] = true
 					break
 				}
@@ -242,7 +242,7 @@ func (e *Engine) Evaluate(cmds []CommandInfo, rawCommand string, cwd string) *Re
 			continue
 		}
 		for j := range e.yellow {
-			if e.matchRule(&e.yellow[j], &cmds[i], rawCommand, cwd) {
+			if e.matchRule(ctx, &e.yellow[j], &cmds[i], rawCommand, cwd) {
 				llmReview := false
 				if e.yellow[j].rule.LLMReview != nil {
 					llmReview = *e.yellow[j].rule.LLMReview
@@ -285,7 +285,7 @@ func decisionToAction(decision string) string {
 
 // matchRule checks whether a compiled rule matches a command.
 // All specified fields must match (conjunction). Unspecified fields are wildcards.
-func (e *Engine) matchRule(cr *compiledRule, cmd *CommandInfo, rawCommand string, cwd string) bool {
+func (e *Engine) matchRule(ctx context.Context, cr *compiledRule, cmd *CommandInfo, rawCommand string, cwd string) bool {
 	r := &cr.rule
 
 	// 1. command/commands
@@ -350,7 +350,7 @@ func (e *Engine) matchRule(cr *compiledRule, cmd *CommandInfo, rawCommand string
 		if !ok {
 			return false // unknown resolver, fail-closed
 		}
-		value, resolved, err := resolver(context.Background(), *cmd, cwd)
+		value, resolved, err := resolver(ctx, *cmd, cwd)
 		if err != nil || !resolved {
 			return false // unresolvable, fail-closed
 		}

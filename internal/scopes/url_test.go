@@ -1,10 +1,11 @@
-package scopes
+package scopes_test
 
 import (
 	"context"
 	"testing"
 
 	"github.com/limbic-systems/stargate/internal/rules"
+	"github.com/limbic-systems/stargate/internal/scopes"
 )
 
 func TestResolveURLDomain(t *testing.T) {
@@ -74,7 +75,7 @@ func TestResolveURLDomain(t *testing.T) {
 			wantOK:     true,
 		},
 
-		// Rejected schemes.
+		// Rejected schemes (allowlist: only http/https accepted).
 		{
 			name:   "file scheme rejected",
 			args:   []string{"file:///etc/passwd"},
@@ -84,6 +85,42 @@ func TestResolveURLDomain(t *testing.T) {
 			name:   "data scheme rejected",
 			args:   []string{"data:text/plain;base64,aGVsbG8="},
 			wantOK: false,
+		},
+		{
+			name:   "ftp scheme rejected",
+			args:   []string{"ftp://files.example.com/pub/file.tar.gz"},
+			wantOK: false,
+		},
+		{
+			name:   "ssh scheme rejected",
+			args:   []string{"ssh://git@github.com/owner/repo"},
+			wantOK: false,
+		},
+
+		// Continue scanning after rejected scheme (fix #1).
+		{
+			name:       "rejected scheme then valid URL",
+			args:       []string{"file:///etc/passwd", "https://api.example.com/path"},
+			wantDomain: "api.example.com",
+			wantOK:     true,
+		},
+
+		// Filename false-positive guard (fix #3).
+		{
+			name:   "output.txt not a domain",
+			args:   []string{"-o", "output.txt"},
+			wantOK: false,
+		},
+		{
+			name:   "config.json not a domain",
+			args:   []string{"config.json"},
+			wantOK: false,
+		},
+		{
+			name:       "domain with path not confused with filename",
+			args:       []string{"example.com/api/v1"},
+			wantDomain: "example.com",
+			wantOK:     true,
 		},
 
 		// No URL found.
@@ -109,7 +146,7 @@ func TestResolveURLDomain(t *testing.T) {
 			t.Parallel()
 
 			cmd := rules.CommandInfo{Args: tc.args}
-			got, ok, err := ResolveURLDomain(context.Background(), cmd, "/tmp")
+			got, ok, err := scopes.ResolveURLDomain(context.Background(), cmd, "/tmp")
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
