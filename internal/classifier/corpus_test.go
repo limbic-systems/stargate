@@ -41,6 +41,7 @@ func TestCorpus(t *testing.T) {
 			}
 
 			scanner := bufio.NewScanner(strings.NewReader(string(data)))
+			scanner.Buffer(make([]byte, 0, 128*1024), 128*1024) // 128KB to exceed max_command_length
 			lineNum := 0
 			for scanner.Scan() {
 				lineNum++

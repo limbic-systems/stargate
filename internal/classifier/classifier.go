@@ -4,6 +4,7 @@ package classifier
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"time"
@@ -161,30 +162,11 @@ func (c *Classifier) Classify(req ClassifyRequest) *ClassifyResponse {
 		}
 	}
 
-	// 4. Unresolvable command guard.
-	for i := range cmds {
-		if cmds[i].Name == "" {
-			decision := c.unresolvable
-			if decision == "" {
-				decision = "yellow"
-			}
-			elapsed := time.Since(start)
-			return &ClassifyResponse{
-				Decision:     decision,
-				Action:       decisionToAction(decision),
-				Reason:       "command name could not be statically resolved",
-				StargateTrID: traceID,
-				Timing: &Timing{
-					ParseUs: parseUs,
-					TotalMs: elapsed.Milliseconds(),
-				},
-				AST:     astSummary,
-				Version: version,
-			}
-		}
-	}
-
-	// 5. Rule engine evaluation.
+	// 4. Rule engine evaluation.
+	// Unresolvable commands (Name == "") are handled by the engine:
+	// they never match command/commands rules, so they fail GREEN and
+	// fall to YELLOW/default. This ensures RED rules still fire for
+	// other commands in the same input (e.g., "$(echo rm); rm -rf /").
 	rulesStart := time.Now()
 	result := c.engine.Evaluate(cmds, req.Command)
 	rulesUs := time.Since(rulesStart).Microseconds()
@@ -245,24 +227,15 @@ func buildASTSummary(cmds []rules.CommandInfo) *ASTSummary {
 	return s
 }
 
-// decisionToAction maps a decision string to its corresponding action.
-func decisionToAction(decision string) string {
-	switch decision {
-	case "red":
-		return "block"
-	case "green":
-		return "allow"
-	default:
-		return "review"
-	}
-}
 
 // newTraceID generates a random trace ID with the sg_tr_ prefix.
 func newTraceID() string {
 	b := make([]byte, 12)
 	if _, err := rand.Read(b); err != nil {
-		// Fallback — use timestamp hex if crypto/rand is unavailable.
-		return fmt.Sprintf("sg_tr_%x", time.Now().UnixNano())
+		// Fallback — deterministic 12 bytes from timestamp hash to preserve
+		// the fixed sg_tr_ + 24-hex-char format.
+		h := sha256.Sum256([]byte(fmt.Sprintf("%d", time.Now().UnixNano())))
+		copy(b, h[:12])
 	}
 	return "sg_tr_" + hex.EncodeToString(b)
 }
