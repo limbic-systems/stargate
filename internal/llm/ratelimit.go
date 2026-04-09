@@ -45,6 +45,9 @@ func NewRateLimitedProvider(provider ReviewerProvider, maxCallsPerMinute int) Re
 // (without blocking) if the per-minute budget is exhausted; otherwise it
 // delegates to the underlying provider.
 func (p *rateLimitedProvider) Review(ctx context.Context, req ReviewRequest) (ReviewResponse, error) {
+	if err := ctx.Err(); err != nil {
+		return ReviewResponse{}, err
+	}
 	if !p.limiter.Allow() {
 		return ReviewResponse{}, ErrRateLimited
 	}
