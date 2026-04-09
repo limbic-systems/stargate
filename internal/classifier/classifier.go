@@ -3,6 +3,7 @@
 package classifier
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -146,7 +147,7 @@ func New(cfg *config.Config) (*Classifier, error) {
 		maxCmdLen:    cfg.Classifier.MaxCommandLength,
 		maxASTDepth:  cfg.Classifier.MaxASTDepth,
 		unresolvable: cfg.Classifier.UnresolvableExpansion,
-		version:      cfg.Version,
+		version:      cmp.Or(cfg.Version, "dev"),
 	}, nil
 }
 
