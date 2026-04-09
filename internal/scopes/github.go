@@ -10,7 +10,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/limbic-systems/stargate/internal/rules"
+	"github.com/limbic-systems/stargate/internal/types"
 )
 
 // validGitHubName matches valid GitHub owner and repo names:
@@ -27,7 +27,7 @@ var validGitHubName = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
 // The space-separated form (--repo owner/repo) is consumed by the walker's
 // global flag skipping and is not available in CommandInfo. Users of that form
 // fall through to .git/config inference.
-func ResolveGitHubRepoOwner(ctx context.Context, cmd rules.CommandInfo, cwd string) (string, bool, error) {
+func ResolveGitHubRepoOwner(ctx context.Context, cmd types.CommandInfo, cwd string) (string, bool, error) {
 	// Step 1: Check flags for --repo=owner/repo or -R=owner/repo.
 	if owner, ok := ownerFromRepoFlag(cmd.Flags); ok {
 		return strings.ToLower(owner), true, nil

@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/limbic-systems/stargate/internal/rules"
 	"github.com/limbic-systems/stargate/internal/scopes"
+	"github.com/limbic-systems/stargate/internal/types"
 )
 
 func TestResolveURLDomain(t *testing.T) {
@@ -158,7 +158,7 @@ func TestResolveURLDomain(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			cmd := rules.CommandInfo{Args: tc.args}
+			cmd := types.CommandInfo{Args: tc.args}
 			got, ok, err := scopes.ResolveURLDomain(context.Background(), cmd, "/tmp")
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)

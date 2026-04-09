@@ -5,7 +5,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/limbic-systems/stargate/internal/rules"
+	"github.com/limbic-systems/stargate/internal/types"
 )
 
 // acceptedSchemes lists the only URL schemes accepted by the url_domain resolver.
@@ -37,7 +37,7 @@ var commonFileExts = map[string]bool{
 //
 // Only http and https schemes are accepted; all others return unresolvable.
 // Schemeless args that look like filenames (e.g., "output.txt") are skipped.
-func ResolveURLDomain(_ context.Context, cmd rules.CommandInfo, _ string) (string, bool, error) {
+func ResolveURLDomain(_ context.Context, cmd types.CommandInfo, _ string) (string, bool, error) {
 	for _, arg := range cmd.Args {
 		raw, ok := extractURLCandidate(arg)
 		if !ok {

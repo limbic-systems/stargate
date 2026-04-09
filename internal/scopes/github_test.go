@@ -6,13 +6,13 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/limbic-systems/stargate/internal/rules"
 	"github.com/limbic-systems/stargate/internal/scopes"
+	"github.com/limbic-systems/stargate/internal/types"
 )
 
 // helper builds a CommandInfo with the given flags and args.
-func ghCmd(flags []string, args []string) rules.CommandInfo {
-	return rules.CommandInfo{
+func ghCmd(flags []string, args []string) types.CommandInfo {
+	return types.CommandInfo{
 		Name:  "gh",
 		Flags: flags,
 		Args:  args,
@@ -24,7 +24,7 @@ func ghCmd(flags []string, args []string) rules.CommandInfo {
 func TestRepoFlagEquals(t *testing.T) {
 	tests := []struct {
 		name  string
-		cmd   rules.CommandInfo
+		cmd   types.CommandInfo
 		want  string
 		wantOK bool
 	}{
@@ -427,11 +427,11 @@ func TestDefaultResolverRegistry(t *testing.T) {
 func TestResolverRegistryOverwrite(t *testing.T) {
 	rr := scopes.NewResolverRegistry()
 	called := false
-	rr.Register("test", func(_ context.Context, _ rules.CommandInfo, _ string) (string, bool, error) {
+	rr.Register("test", func(_ context.Context, _ types.CommandInfo, _ string) (string, bool, error) {
 		called = true
 		return "v1", true, nil
 	})
-	rr.Register("test", func(_ context.Context, _ rules.CommandInfo, _ string) (string, bool, error) {
+	rr.Register("test", func(_ context.Context, _ types.CommandInfo, _ string) (string, bool, error) {
 		return "v2", true, nil
 	})
 
@@ -439,7 +439,7 @@ func TestResolverRegistryOverwrite(t *testing.T) {
 	if !ok {
 		t.Fatal("expected resolver to exist")
 	}
-	val, _, _ := fn(context.Background(), rules.CommandInfo{}, "")
+	val, _, _ := fn(context.Background(), types.CommandInfo{}, "")
 	if val != "v2" {
 		t.Errorf("got %q, want %q (second registration should overwrite)", val, "v2")
 	}

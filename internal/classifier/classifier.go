@@ -105,20 +105,6 @@ type CommandSummary struct {
 	Args       []string `json:"args,omitempty"`
 }
 
-// resolverAdapter wraps *scopes.ResolverRegistry to satisfy rules.ResolverProvider.
-// This avoids a circular import between rules and scopes packages.
-type resolverAdapter struct {
-	rr *scopes.ResolverRegistry
-}
-
-func (a *resolverAdapter) Get(name string) (rules.ResolverFunc, bool) {
-	r, ok := a.rr.Get(name)
-	if !ok {
-		return nil, false
-	}
-	return rules.ResolverFunc(r), ok
-}
-
 // New creates a Classifier from the given config.
 // Returns an error if the rule engine cannot be compiled.
 func New(cfg *config.Config) (*Classifier, error) {
@@ -131,7 +117,7 @@ func New(cfg *config.Config) (*Classifier, error) {
 		return nil, fmt.Errorf("classifier: build scope registry: %w", err)
 	}
 	var scopeMatcher rules.ScopeMatcher = reg
-	var resolverProvider rules.ResolverProvider = &resolverAdapter{rr: scopes.DefaultResolverRegistry()}
+	var resolverProvider rules.ResolverProvider = scopes.NewResolverAdapter(scopes.DefaultResolverRegistry())
 
 	eng, err := rules.NewEngine(cfg, scopeMatcher, resolverProvider)
 	if err != nil {

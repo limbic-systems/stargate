@@ -3,13 +3,13 @@ package scopes
 import (
 	"context"
 
-	"github.com/limbic-systems/stargate/internal/rules"
+	"github.com/limbic-systems/stargate/internal/types"
 )
 
 // Resolver extracts a target value from a command for scope matching.
 // Returns the resolved value and whether resolution succeeded.
 // Errors are treated as unresolvable (fail-closed) and should be logged by callers.
-type Resolver func(ctx context.Context, cmd rules.CommandInfo, cwd string) (value string, ok bool, err error)
+type Resolver func(ctx context.Context, cmd types.CommandInfo, cwd string) (value string, ok bool, err error)
 
 // ResolverRegistry maps resolver names to their implementations.
 type ResolverRegistry struct {
