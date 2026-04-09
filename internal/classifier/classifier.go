@@ -361,15 +361,16 @@ func (c *Classifier) reviewWithLLM(ctx context.Context, req ClassifyRequest, cmd
 	}
 
 	// File retrieval round.
-	result.Rounds = 2
 	result.FilesRequested = llmResp.RequestFiles
 
 	if !c.llmCfg.AllowFileRetrieval {
-		// File retrieval disabled — second call without files.
+		// File retrieval disabled — return first-call response, no second call.
 		result.Decision = llmResp.Decision
 		result.Reasoning = truncateReasoning(llmResp.Reasoning, c.maxReasonLen)
 		return result
 	}
+
+	result.Rounds = 2
 
 	fileCfg := llm.FileResolverConfig{
 		AllowedPaths:      c.llmCfg.AllowedPaths,
