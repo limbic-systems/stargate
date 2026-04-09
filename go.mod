@@ -9,3 +9,5 @@ require github.com/BurntSushi/toml v1.6.0
 require mvdan.cc/sh/v3 v3.13.1
 
 require github.com/bmatcuk/doublestar/v4 v4.10.0
+
+require golang.org/x/time v0.15.0 // indirect
