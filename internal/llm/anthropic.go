@@ -128,17 +128,18 @@ func (p *AnthropicProvider) reviewSubprocess(ctx context.Context, req ReviewRequ
 }
 
 // parseResponse extracts a ReviewResponse from the LLM's JSON output.
-// Uses strict Go struct unmarshalling: type mismatches → error → "review".
+// Unknown JSON fields are silently ignored (not treated as errors).
+// Type mismatches (e.g., decision as int) cause a parse error → "review".
 func parseResponse(text string) (ReviewResponse, error) {
 	// The LLM may wrap JSON in markdown code fences — extract the content.
+	// Only attempt fence extraction if the response starts with a fence to
+	// avoid false-matching backticks inside valid JSON strings.
 	text = strings.TrimSpace(text)
-	if idx := strings.Index(text, "```"); idx >= 0 {
-		// Find the opening fence and skip the language tag line.
-		rest := text[idx+3:]
+	if strings.HasPrefix(text, "```") {
+		rest := text[3:]
 		if nl := strings.IndexByte(rest, '\n'); nl >= 0 {
 			rest = rest[nl+1:]
 		}
-		// Find the closing fence.
 		if end := strings.Index(rest, "```"); end >= 0 {
 			text = strings.TrimSpace(rest[:end])
 		}
