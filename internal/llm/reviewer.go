@@ -1,6 +1,6 @@
-// Package llm implements the LLM review subsystem: provider interface,
-// prompt building with XML fence security, file retrieval with path
-// validation, and rate limiting.
+// Package llm implements the LLM review subsystem: provider interface
+// and prompt building with XML fence security. File retrieval, rate
+// limiting, and the Anthropic provider are added in a follow-up PR.
 package llm
 
 import "context"

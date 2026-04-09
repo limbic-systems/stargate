@@ -88,11 +88,11 @@ func (s *Scrubber) Text(text string) string {
 // Env values are replaced with [REDACTED]; args matching token patterns are
 // redacted. The original CommandInfo is not modified.
 func (s *Scrubber) CommandInfo(cmd types.CommandInfo) types.CommandInfo {
-	out := cmd    // shallow copy
+	out := cmd        // shallow copy
 	out.RawNode = nil // clear AST pointer to prevent unsanitized data leaking
 
-	// Deep copy and redact Env values.
-	if len(cmd.Env) > 0 {
+	// Deep copy and redact Env values. Copy when non-nil (preserve nil vs empty).
+	if cmd.Env != nil {
 		out.Env = make(map[string]string, len(cmd.Env))
 		for k := range cmd.Env {
 			out.Env[k] = "[REDACTED]"
@@ -100,7 +100,7 @@ func (s *Scrubber) CommandInfo(cmd types.CommandInfo) types.CommandInfo {
 	}
 
 	// Deep copy and redact matching Args.
-	if len(cmd.Args) > 0 {
+	if cmd.Args != nil {
 		out.Args = make([]string, len(cmd.Args))
 		for i, arg := range cmd.Args {
 			out.Args[i] = s.Text(arg)
@@ -109,7 +109,7 @@ func (s *Scrubber) CommandInfo(cmd types.CommandInfo) types.CommandInfo {
 
 	// Deep copy and redact Flags — flag tokens may include inline values
 	// (e.g., --token=ghp_abc, -HAuthorization:Bearer...) that contain secrets.
-	if len(cmd.Flags) > 0 {
+	if cmd.Flags != nil {
 		out.Flags = make([]string, len(cmd.Flags))
 		for i, flag := range cmd.Flags {
 			out.Flags[i] = s.Text(flag)
@@ -117,7 +117,7 @@ func (s *Scrubber) CommandInfo(cmd types.CommandInfo) types.CommandInfo {
 	}
 
 	// Deep copy Redirects.
-	if len(cmd.Redirects) > 0 {
+	if cmd.Redirects != nil {
 		out.Redirects = make([]types.RedirectInfo, len(cmd.Redirects))
 		copy(out.Redirects, cmd.Redirects)
 	}
