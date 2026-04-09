@@ -267,7 +267,6 @@ func TestAllFenceTagNames(t *testing.T) {
 		"trusted_scopes",
 	}
 	for _, name := range names {
-		name := name
 		t.Run(name+"/opening", func(t *testing.T) {
 			input := "<" + name + ">"
 			got := StripFenceTags(input)
@@ -292,7 +291,7 @@ func TestIterationBound(t *testing.T) {
 		base := "untrusted_command"
 		input := "</" + base + ">"
 		// Wrap 15 times — exceeds the 10-iteration limit.
-		for i := 0; i < 15; i++ {
+		for range 15 {
 			input = "</" + "untrusted_" + input + "command>"
 		}
 		// Must not hang; just verify it returns.
@@ -347,7 +346,6 @@ func TestNonFenceTagsPreserved(t *testing.T) {
 		{"closing arbitrary tag", `</foo_bar>`},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			got := StripFenceTags(tc.input)
 			if got != tc.input {
