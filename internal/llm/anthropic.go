@@ -78,14 +78,15 @@ func (p *AnthropicProvider) reviewSDK(ctx context.Context, req ReviewRequest) (R
 		return ReviewResponse{}, fmt.Errorf("llm: anthropic API error: %w", err)
 	}
 
-	// Extract text from the response.
-	var text string
+	// Concatenate all text blocks from the response (Anthropic responses
+	// can contain multiple text blocks).
+	var textParts []string
 	for _, block := range resp.Content {
 		if block.Type == "text" {
-			text = block.Text
-			break
+			textParts = append(textParts, block.Text)
 		}
 	}
+	text := strings.Join(textParts, "")
 	if text == "" {
 		return ReviewResponse{}, fmt.Errorf("llm: empty response from Anthropic API")
 	}
