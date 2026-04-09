@@ -44,8 +44,9 @@ software development context. The command was flagged for review because:
 Respond with exactly one JSON object. You have two options:
 
 ### Option 1: Render a verdict
+The "decision" field must be exactly "allow" or "deny".
 {
-  "decision": "allow" | "deny",
+  "decision": "allow",
   "reasoning": "Brief explanation",
   "risk_factors": ["list", "of", "concerns"]
 }
