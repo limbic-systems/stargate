@@ -1,5 +1,5 @@
 // Package classifier orchestrates the stargate classification pipeline:
-// parse → rules → (corpus, LLM in future milestones).
+// parse → rules → LLM review → (corpus in future milestones).
 package classifier
 
 import (
@@ -8,16 +8,20 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/limbic-systems/stargate/internal/config"
+	"github.com/limbic-systems/stargate/internal/llm"
 	"github.com/limbic-systems/stargate/internal/parser"
 	"github.com/limbic-systems/stargate/internal/rules"
+	"github.com/limbic-systems/stargate/internal/scrub"
 )
 
-// Classifier orchestrates the parse → rule-engine pipeline.
+// Classifier orchestrates the parse → rule-engine → LLM review pipeline.
 type Classifier struct {
 	engine       *rules.Engine
 	walkerCfg    *parser.WalkerConfig
@@ -26,6 +30,12 @@ type Classifier struct {
 	maxASTDepth  int
 	unresolvable string
 	version      string // from config, included in every response
+	llmProvider  llm.ReviewerProvider // nil = LLM review disabled
+	scrubber     *scrub.Scrubber
+	llmCfg       config.LLMConfig
+	scopes       map[string][]string // for prompt injection
+	serverCWD    string              // for file retrieval path anchoring
+	maxReasonLen int                 // max reasoning chars in API response
 }
 
 // ClassifyRequest is the input to the classifier.
@@ -107,7 +117,7 @@ type CommandSummary struct {
 }
 
 // New creates a Classifier from the given config.
-// Returns an error if the rule engine cannot be compiled.
+// Returns an error if the rule engine or scrubber cannot be initialized.
 func New(cfg *config.Config) (*Classifier, error) {
 	eng, err := rules.NewEngine(cfg)
 	if err != nil {
@@ -115,6 +125,26 @@ func New(cfg *config.Config) (*Classifier, error) {
 	}
 
 	wc := parser.NewWalkerConfig(cfg.Wrappers, cfg.Commands)
+
+	// Initialize secret scrubber.
+	scrubber, err := scrub.New(cfg.Scrubbing.ExtraPatterns)
+	if err != nil {
+		return nil, fmt.Errorf("classifier: init scrubber: %w", err)
+	}
+
+	// Initialize LLM provider (nil if no auth available).
+	var provider llm.ReviewerProvider
+	ap := llm.NewAnthropicProvider(cfg.LLM.APIKey)
+	if ap.HasAuth() {
+		provider = ap
+		// Wrap with rate limiter if configured.
+		if cfg.LLM.MaxCallsPerMinute > 0 {
+			provider = llm.NewRateLimitedProvider(provider, cfg.LLM.MaxCallsPerMinute)
+		}
+	}
+
+	// Determine server CWD for file path anchoring.
+	cwd, _ := os.Getwd()
 
 	return &Classifier{
 		engine:       eng,
@@ -124,7 +154,24 @@ func New(cfg *config.Config) (*Classifier, error) {
 		maxASTDepth:  cfg.Classifier.MaxASTDepth,
 		unresolvable: cfg.Classifier.UnresolvableExpansion,
 		version:      cmp.Or(cfg.Version, "dev"),
+		llmProvider:  provider,
+		scrubber:     scrubber,
+		llmCfg:       cfg.LLM,
+		scopes:       cfg.Scopes,
+		serverCWD:    cwd,
+		maxReasonLen: cfg.LLM.MaxResponseReasoningLength,
 	}, nil
+}
+
+// NewWithProvider creates a Classifier with an explicit LLM provider.
+// Used for testing with mock providers.
+func NewWithProvider(cfg *config.Config, provider llm.ReviewerProvider) (*Classifier, error) {
+	c, err := New(cfg)
+	if err != nil {
+		return nil, err
+	}
+	c.llmProvider = provider
+	return c, nil
 }
 
 // Classify runs the classification pipeline and returns a response.
@@ -216,7 +263,187 @@ func (c *Classifier) Classify(ctx context.Context, req ClassifyRequest) *Classif
 	resp.Action = result.Action
 	resp.Reason = result.Reason
 	resp.Rule = result.Rule
+
+	// 6. LLM review — only for YELLOW decisions with llm_review=true.
+	if result.LLMReview && c.llmProvider != nil {
+		llmResult := c.reviewWithLLM(ctx, req, cmds, resp)
+		resp.LLMReview = llmResult
+		resp.Timing.LLMMs = llmResult.DurationMs
+
+		// Map LLM decision to action.
+		switch llmResult.Decision {
+		case "allow":
+			resp.Action = "allow"
+			resp.Reason = "LLM review approved: " + truncate(llmResult.Reasoning, 200)
+		case "deny":
+			resp.Action = "block"
+			resp.Reason = "LLM review denied: " + truncate(llmResult.Reasoning, 200)
+		default:
+			// Invalid/empty decision → ask user (fail-closed).
+			resp.Action = "review"
+		}
+	}
+
 	return finalize()
+}
+
+// reviewWithLLM runs the LLM review pipeline: scrub → prompt → call → (files → call).
+func (c *Classifier) reviewWithLLM(ctx context.Context, req ClassifyRequest, cmds []rules.CommandInfo, resp *ClassifyResponse) *LLMReviewResult {
+	llmStart := time.Now()
+	result := &LLMReviewResult{Performed: true, Rounds: 1}
+
+	defer func() {
+		result.DurationMs = float64(time.Since(llmStart).Microseconds()) / 1000
+	}()
+
+	// Scrub command and build AST summary.
+	scrubbedCmd := c.scrubber.Command(req.Command)
+	astSummary := c.buildASTTextSummary(cmds)
+
+	// Format scopes for prompt.
+	var scopeLines []string
+	for name, values := range c.scopes {
+		scopeLines = append(scopeLines, name+": "+strings.Join(values, ", "))
+	}
+
+	vars := llm.PromptVars{
+		Command:    scrubbedCmd,
+		ASTSummary: astSummary,
+		CWD:        req.CWD,
+		RuleReason: resp.Reason,
+		Scopes:     strings.Join(scopeLines, "\n"),
+	}
+
+	systemPrompt, userContent := llm.BuildPrompt(vars)
+
+	// First LLM call.
+	llmReq := llm.ReviewRequest{
+		SystemPrompt: systemPrompt,
+		UserContent:  userContent,
+		Model:        c.llmCfg.Model,
+		MaxTokens:    c.llmCfg.MaxTokens,
+		Temperature:  c.llmCfg.Temperature,
+	}
+
+	llmResp, err := c.llmProvider.Review(ctx, llmReq)
+	if err != nil {
+		if errors.Is(err, llm.ErrRateLimited) {
+			result.Reasoning = "LLM rate limit exceeded"
+		} else {
+			result.Reasoning = "LLM call failed: " + err.Error()
+		}
+		// Fail-closed: fall back to ask user.
+		return result
+	}
+
+	// If verdict, we're done.
+	if len(llmResp.RequestFiles) == 0 {
+		result.Decision = llmResp.Decision
+		result.Reasoning = truncateReasoning(llmResp.Reasoning, c.maxReasonLen)
+		result.RiskFactors = llmResp.RiskFactors
+		return result
+	}
+
+	// File retrieval round.
+	result.Rounds = 2
+	result.FilesRequested = llmResp.RequestFiles
+
+	if !c.llmCfg.AllowFileRetrieval {
+		// File retrieval disabled — second call without files.
+		result.Decision = llmResp.Decision
+		result.Reasoning = truncateReasoning(llmResp.Reasoning, c.maxReasonLen)
+		return result
+	}
+
+	fileCfg := llm.FileResolverConfig{
+		AllowedPaths:      c.llmCfg.AllowedPaths,
+		DeniedPaths:       c.llmCfg.DeniedPaths,
+		MaxFileSize:       c.llmCfg.MaxFileSize,
+		MaxFilesPerReq:    c.llmCfg.MaxFilesPerRequest,
+		MaxTotalFileBytes: c.llmCfg.MaxTotalFileBytes,
+		ServerCWD:         c.serverCWD,
+		Scrubber:          c.scrubber,
+	}
+
+	fileResults := llm.ResolveFiles(llmResp.RequestFiles, fileCfg)
+
+	// Build file contents block and track inspected files.
+	var fileContentParts []string
+	for _, fr := range fileResults {
+		if fr.Absent {
+			fileContentParts = append(fileContentParts, fmt.Sprintf("### %s\n[file not available]", fr.Label))
+			continue
+		}
+		result.FilesInspected = append(result.FilesInspected, fr.FullPath)
+		header := fmt.Sprintf("### %s", fr.Label)
+		if fr.Truncated {
+			header += " [truncated]"
+		}
+		fileContentParts = append(fileContentParts, header+"\n"+fr.Content)
+	}
+
+	// Rebuild prompt with file contents.
+	vars.FileContents = strings.Join(fileContentParts, "\n\n")
+	systemPrompt2, userContent2 := llm.BuildPrompt(vars)
+	llmReq.SystemPrompt = systemPrompt2
+	llmReq.UserContent = userContent2
+
+	// Second LLM call.
+	llmResp2, err := c.llmProvider.Review(ctx, llmReq)
+	if err != nil {
+		result.Reasoning = "Second LLM call failed: " + err.Error()
+		return result
+	}
+
+	// Second call MUST return a verdict — another file request → deny.
+	if len(llmResp2.RequestFiles) > 0 {
+		result.Decision = "deny"
+		result.Reasoning = "LLM requested files again (two-call maximum enforced)"
+		return result
+	}
+
+	result.Decision = llmResp2.Decision
+	result.Reasoning = truncateReasoning(llmResp2.Reasoning, c.maxReasonLen)
+	result.RiskFactors = llmResp2.RiskFactors
+	return result
+}
+
+// buildASTTextSummary produces a human-readable text summary of the AST
+// for inclusion in the LLM prompt.
+func (c *Classifier) buildASTTextSummary(cmds []rules.CommandInfo) string {
+	var parts []string
+	for _, cmd := range cmds {
+		scrubbedCmd := c.scrubber.CommandInfo(cmd)
+		line := scrubbedCmd.Name
+		if scrubbedCmd.Subcommand != "" {
+			line += " " + scrubbedCmd.Subcommand
+		}
+		if len(scrubbedCmd.Flags) > 0 {
+			line += " flags=" + strings.Join(scrubbedCmd.Flags, ",")
+		}
+		if len(scrubbedCmd.Args) > 0 {
+			line += " args=" + strings.Join(scrubbedCmd.Args, ",")
+		}
+		line += " context=" + contextString(&rules.CommandInfo{Context: scrubbedCmd.Context})
+		parts = append(parts, line)
+	}
+	return strings.Join(parts, "\n")
+}
+
+// truncateReasoning truncates reasoning to maxLen characters for API responses.
+func truncateReasoning(reasoning string, maxLen int) string {
+	if maxLen <= 0 || len(reasoning) <= maxLen {
+		return reasoning
+	}
+	return reasoning[:maxLen] + "..."
+}
+
+// truncate is a convenience for short truncation (e.g., in reason strings).
+func truncate(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }
 
 // buildASTSummary derives an ASTSummary from the parsed CommandInfo slice.
