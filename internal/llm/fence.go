@@ -49,9 +49,10 @@ var unicodeConfusables = strings.NewReplacer(
 )
 
 // fenceTagRegexps are compiled regexes for each fence tag name.
-// Pattern requires exact tag name match (not prefix) — <trusted_scopesXYZ>
-// would NOT match. The (?:\s|/?>|$) boundary ensures the tag name ends at
-// whitespace, closing slash, >, or end of string.
+// Pattern: (?i)<\s*/?\s*TAGNAME(?:\s[^>]*)?\s*/?>
+// Requires exact tag name — <trusted_scopesXYZ> would NOT match because the
+// name must be followed by optional whitespace+attributes then a closing >.
+// Unterminated tags (no closing >) are not matched.
 var fenceTagRegexps []*regexp.Regexp
 
 func init() {
