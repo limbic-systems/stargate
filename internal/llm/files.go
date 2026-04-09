@@ -73,12 +73,6 @@ func ResolveFiles(paths []string, cfg FileResolverConfig) []FileResult {
 			continue
 		}
 
-		// Step 5: Check cumulative budget before reading.
-		if cfg.MaxTotalFileBytes > 0 && totalBytes >= cfg.MaxTotalFileBytes {
-			results[i] = FileResult{Label: label, Absent: true}
-			continue
-		}
-
 		// Step 5: Read file, bounded by both per-file and remaining total budget.
 		readLimit := cfg.MaxFileSize
 		if cfg.MaxTotalFileBytes > 0 {

@@ -105,10 +105,13 @@ func (p *AnthropicProvider) reviewSubprocess(ctx context.Context, req ReviewRequ
 	if err != nil {
 		return ReviewResponse{}, fmt.Errorf("llm: stderr pipe: %w", err)
 	}
+	// Drain stderr to EOF to prevent pipe deadlock. Retain only the first
+	// 4KB for diagnostics; discard the rest.
 	var stderrBuf strings.Builder
 	var wg sync.WaitGroup
 	wg.Go(func() {
 		io.Copy(&stderrBuf, io.LimitReader(stderrPipe, 4096)) //nolint:errcheck
+		io.Copy(io.Discard, stderrPipe)                        //nolint:errcheck // drain remainder
 	})
 
 	output, err := cmd.Output()

@@ -347,24 +347,11 @@ func TestClassifyLLMError(t *testing.T) {
 }
 
 func TestClassifyLLMFileRequest(t *testing.T) {
-	callCount := 0
-	mock := &mockProvider{}
-	// First call returns file request, second returns verdict.
-	mock.response = llm.ReviewResponse{
-		RequestFiles: []string{"./deploy.sh"},
-		Reasoning:    "Need to inspect script",
-	}
-	origReview := mock.Review
-	_ = origReview
-
-	// Use a stateful mock.
-	type statefulMock struct {
-		calls int
-	}
-	sm := &statefulMock{}
+	// Stateful mock: first call returns file request, second returns verdict.
+	calls := 0
 	provider := reviewerFunc(func(_ context.Context, req llm.ReviewRequest) (llm.ReviewResponse, error) {
-		sm.calls++
-		if sm.calls == 1 {
+		calls++
+		if calls == 1 {
 			return llm.ReviewResponse{
 				RequestFiles: []string{"./nonexistent.sh"},
 				Reasoning:    "Need file",
@@ -383,7 +370,6 @@ func TestClassifyLLMFileRequest(t *testing.T) {
 
 	resp := clf.Classify(context.Background(), classifier.ClassifyRequest{Command: "curl https://example.com"})
 
-	_ = callCount
 	if resp.LLMReview == nil {
 		t.Fatal("llm_review is nil")
 	}
@@ -393,8 +379,8 @@ func TestClassifyLLMFileRequest(t *testing.T) {
 	if resp.LLMReview.Decision != "allow" {
 		t.Errorf("llm decision = %q, want allow", resp.LLMReview.Decision)
 	}
-	if sm.calls != 2 {
-		t.Errorf("provider called %d times, want 2", sm.calls)
+	if calls != 2 {
+		t.Errorf("provider called %d times, want 2", calls)
 	}
 }
 
