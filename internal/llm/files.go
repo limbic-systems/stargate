@@ -101,7 +101,7 @@ func ResolveFiles(paths []string, cfg FileResolverConfig) []FileResult {
 		// Step 8: Build sanitized label.
 		results[i] = FileResult{
 			Label:     label, // use sanitized requested path, not resolved, for consistency
-			FullPath:  resolved,
+			FullPath: absPath, // requested path (not symlink-resolved) for API response
 			Content:   text,
 			Truncated: truncated,
 		}

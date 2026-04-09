@@ -330,7 +330,7 @@ func (c *Classifier) reviewWithLLM(ctx context.Context, req ClassifyRequest, cmd
 		Scopes:     strings.Join(scopeLines, "\n"),
 	}
 
-	systemPrompt, userContent := llm.BuildPrompt(vars)
+	systemPrompt, userContent := llm.BuildPrompt(c.llmCfg.SystemPrompt, vars)
 
 	// First LLM call.
 	llmReq := llm.ReviewRequest{
@@ -401,7 +401,7 @@ func (c *Classifier) reviewWithLLM(ctx context.Context, req ClassifyRequest, cmd
 
 	// Rebuild prompt with file contents.
 	vars.FileContents = strings.Join(fileContentParts, "\n\n")
-	systemPrompt2, userContent2 := llm.BuildPrompt(vars)
+	systemPrompt2, userContent2 := llm.BuildPrompt(c.llmCfg.SystemPrompt, vars)
 	llmReq.SystemPrompt = systemPrompt2
 	llmReq.UserContent = userContent2
 
@@ -448,8 +448,12 @@ func (c *Classifier) buildASTTextSummary(cmds []rules.CommandInfo) string {
 }
 
 // truncateReasoning truncates reasoning to maxLen characters for API responses.
+// maxLen == 0 means omit reasoning entirely (per spec: "Set to 0 to omit").
 func truncateReasoning(reasoning string, maxLen int) string {
-	if maxLen <= 0 || len(reasoning) <= maxLen {
+	if maxLen == 0 {
+		return ""
+	}
+	if maxLen < 0 || len(reasoning) <= maxLen {
 		return reasoning
 	}
 	return reasoning[:maxLen] + "..."
