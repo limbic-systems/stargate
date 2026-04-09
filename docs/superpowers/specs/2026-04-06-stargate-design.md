@@ -137,7 +137,7 @@ Configuration:
 ```toml
 [llm]
 provider = "anthropic"  # default; future: "openai", "google", "ollama"
-model = "claude-haiku-4-5-20251001"
+model = "claude-sonnet-4-6"
 
 # Optional. If omitted, falls back to ANTHROPIC_API_KEY env var,
 # then CLAUDE_CODE_OAUTH_TOKEN env var (via claude -p).
@@ -647,7 +647,7 @@ reason = "exec replaces the current process — LLM reviews the target command."
 provider = "anthropic"
 
 # Model to use for YELLOW command review.
-model = "claude-haiku-4-5-20251001"
+model = "claude-sonnet-4-6"
 
 # API key for direct provider access. If omitted, falls back to:
 #   1. ANTHROPIC_API_KEY env var
