@@ -270,6 +270,7 @@ func TestScrubCommandInfo(t *testing.T) {
 		},
 		Redirects: []types.RedirectInfo{
 			{Op: ">", File: "output.txt"},
+			{Op: ">>", File: "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij.log"},
 		},
 	}
 
@@ -338,12 +339,21 @@ func TestScrubCommandInfo(t *testing.T) {
 		}
 	})
 
-	t.Run("redirects deep copied", func(t *testing.T) {
+	t.Run("redirects deep copied and scrubbed", func(t *testing.T) {
 		if len(result.Redirects) != len(original.Redirects) {
 			t.Fatalf("Redirects length mismatch: got %d, want %d", len(result.Redirects), len(original.Redirects))
 		}
-		if result.Redirects[0] != original.Redirects[0] {
-			t.Errorf("Redirects[0] changed: got %+v, want %+v", result.Redirects[0], original.Redirects[0])
+		// Non-secret redirect unchanged.
+		if result.Redirects[0].File != "output.txt" {
+			t.Errorf("Redirects[0].File = %q, want output.txt", result.Redirects[0].File)
+		}
+		// Secret-bearing redirect scrubbed.
+		if strings.Contains(result.Redirects[1].File, "ghp_") {
+			t.Errorf("Redirects[1].File still contains secret: %q", result.Redirects[1].File)
+		}
+		// Original unmodified.
+		if !strings.Contains(original.Redirects[1].File, "ghp_") {
+			t.Error("original Redirects[1].File was mutated")
 		}
 	})
 

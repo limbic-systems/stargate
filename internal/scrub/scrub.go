@@ -135,10 +135,15 @@ func (s *Scrubber) CommandInfo(cmd types.CommandInfo) types.CommandInfo {
 		}
 	}
 
-	// Deep copy Redirects.
+	// Deep copy and scrub Redirects — targets can contain secrets in filenames.
 	if cmd.Redirects != nil {
 		out.Redirects = make([]types.RedirectInfo, len(cmd.Redirects))
-		copy(out.Redirects, cmd.Redirects)
+		for i, r := range cmd.Redirects {
+			out.Redirects[i] = types.RedirectInfo{
+				Op:   r.Op,
+				File: s.Text(r.File),
+			}
+		}
 	}
 
 	return out
