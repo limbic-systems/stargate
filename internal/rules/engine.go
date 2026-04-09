@@ -2,6 +2,7 @@
 package rules
 
 import (
+	"context"
 	"fmt"
 	"path"
 	"regexp"
@@ -10,14 +11,17 @@ import (
 
 	"github.com/bmatcuk/doublestar/v4"
 	"github.com/limbic-systems/stargate/internal/config"
+	"github.com/limbic-systems/stargate/internal/scopes"
 )
 
 // Engine evaluates commands against compiled classification rules.
 type Engine struct {
-	red             []compiledRule
-	green           []compiledRule
-	yellow          []compiledRule
-	defaultDecision string
+	red              []compiledRule
+	green            []compiledRule
+	yellow           []compiledRule
+	defaultDecision  string
+	scopeMatcher     ScopeMatcher
+	resolverProvider ResolverProvider
 }
 
 // compiledRule holds a config rule with pre-compiled fields.
@@ -46,8 +50,10 @@ type MatchedRule struct {
 }
 
 // NewEngine compiles rules from config and returns an Engine.
+// It builds the scope registry and resolver infrastructure internally from cfg.
 // Returns an error if any rule has both command and commands set,
-// or if a regex pattern fails to compile.
+// if a regex pattern fails to compile, or if a rule references an
+// undefined scope or resolver.
 func NewEngine(cfg *config.Config) (*Engine, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("rules: config must not be nil")
@@ -60,11 +66,22 @@ func NewEngine(cfg *config.Config) (*Engine, error) {
 	if !validDecisions[defDecision] {
 		return nil, fmt.Errorf("rules: invalid default_decision %q", defDecision)
 	}
+
+	// Build scope registry from config. Always construct even when no scopes are
+	// configured — an empty registry causes resolve rules to fail the Has check at
+	// validation time (a clear config error), rather than panicking.
+	scopeReg, err := scopes.NewRegistry(cfg.Scopes)
+	if err != nil {
+		return nil, fmt.Errorf("rules: build scope registry: %w", err)
+	}
+	resolverProv := scopes.NewResolverAdapter(scopes.DefaultResolverRegistry())
+
 	e := &Engine{
-		defaultDecision: defDecision,
+		defaultDecision:  defDecision,
+		scopeMatcher:     scopeReg,
+		resolverProvider: resolverProv,
 	}
 
-	var err error
 	if e.red, err = compileRules(cfg.Rules.Red, "red"); err != nil {
 		return nil, err
 	}
@@ -73,6 +90,27 @@ func NewEngine(cfg *config.Config) (*Engine, error) {
 	}
 	if e.yellow, err = compileRules(cfg.Rules.Yellow, "yellow"); err != nil {
 		return nil, err
+	}
+
+	// Validate that all rules with resolve reference defined scopes and resolvers.
+	allRules := []struct {
+		level string
+		rules []compiledRule
+	}{
+		{"red", e.red}, {"green", e.green}, {"yellow", e.yellow},
+	}
+	for _, group := range allRules {
+		for _, cr := range group.rules {
+			if cr.rule.Resolve == nil {
+				continue
+			}
+			if !scopeReg.Has(cr.rule.Resolve.Scope) {
+				return nil, fmt.Errorf("rules.%s[%d]: resolve references undefined scope %q", group.level, cr.index, cr.rule.Resolve.Scope)
+			}
+			if _, ok := resolverProv.Get(cr.rule.Resolve.Resolver); !ok {
+				return nil, fmt.Errorf("rules.%s[%d]: resolve references undefined resolver %q", group.level, cr.index, cr.rule.Resolve.Resolver)
+			}
+		}
 	}
 
 	return e, nil
@@ -137,11 +175,11 @@ func compileRules(rules []config.Rule, level string) ([]compiledRule, error) {
 }
 
 // Evaluate runs the RED/GREEN/YELLOW pipeline and returns a classification.
-func (e *Engine) Evaluate(cmds []CommandInfo, rawCommand string) *Result {
+func (e *Engine) Evaluate(ctx context.Context, cmds []CommandInfo, rawCommand string, cwd string) *Result {
 	// Phase 1: RED — any match returns immediately.
 	for i := range cmds {
 		for j := range e.red {
-			if matchRule(&e.red[j], &cmds[i], rawCommand) {
+			if e.matchRule(ctx, &e.red[j], &cmds[i], rawCommand, cwd) {
 				return &Result{
 					Decision: "red",
 					Action:   "block",
@@ -163,7 +201,7 @@ func (e *Engine) Evaluate(cmds []CommandInfo, rawCommand string) *Result {
 		allGreen := true
 		for i := range cmds {
 			for j := range e.green {
-				if matchRule(&e.green[j], &cmds[i], rawCommand) {
+				if e.matchRule(ctx, &e.green[j], &cmds[i], rawCommand, cwd) {
 					greenMatched[i] = true
 					break
 				}
@@ -192,7 +230,7 @@ func (e *Engine) Evaluate(cmds []CommandInfo, rawCommand string) *Result {
 			continue
 		}
 		for j := range e.yellow {
-			if matchRule(&e.yellow[j], &cmds[i], rawCommand) {
+			if e.matchRule(ctx, &e.yellow[j], &cmds[i], rawCommand, cwd) {
 				llmReview := false
 				if e.yellow[j].rule.LLMReview != nil {
 					llmReview = *e.yellow[j].rule.LLMReview
@@ -235,7 +273,7 @@ func decisionToAction(decision string) string {
 
 // matchRule checks whether a compiled rule matches a command.
 // All specified fields must match (conjunction). Unspecified fields are wildcards.
-func matchRule(cr *compiledRule, cmd *CommandInfo, rawCommand string) bool {
+func (e *Engine) matchRule(ctx context.Context, cr *compiledRule, cmd *CommandInfo, rawCommand string, cwd string) bool {
 	r := &cr.rule
 
 	// 1. command/commands
@@ -291,11 +329,22 @@ func matchRule(cr *compiledRule, cmd *CommandInfo, rawCommand string) bool {
 		}
 	}
 
-	// 7. resolve — not implemented until M3. Rules with a resolve field
-	// do NOT match until resolvers are available. This prevents false-GREEN
-	// classifications for scope-gated rules (e.g., curl/gh) during M2.
+	// 7. resolve — contextual trust check via scope-bound resolver.
 	if r.Resolve != nil {
-		return false
+		if e.resolverProvider == nil || e.scopeMatcher == nil {
+			return false // no resolver/scope support, fail-closed
+		}
+		resolver, ok := e.resolverProvider.Get(r.Resolve.Resolver)
+		if !ok {
+			return false // unknown resolver, fail-closed
+		}
+		value, resolved, err := resolver(ctx, *cmd, cwd)
+		if err != nil || !resolved {
+			return false // unresolvable, fail-closed
+		}
+		if !e.scopeMatcher.Match(r.Resolve.Scope, value) {
+			return false // value not in scope
+		}
 	}
 
 	// 8. pattern

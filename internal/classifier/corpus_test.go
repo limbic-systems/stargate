@@ -2,6 +2,7 @@ package classifier_test
 
 import (
 	"bufio"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -62,7 +63,7 @@ func TestCorpus(t *testing.T) {
 				command := strings.TrimSpace(parts[0])
 				want := strings.TrimSpace(parts[1])
 
-				resp := clf.Classify(classifier.ClassifyRequest{Command: command})
+				resp := clf.Classify(context.Background(), classifier.ClassifyRequest{Command: command})
 				if resp.Decision != want {
 					t.Errorf("line %d: %q => got %q, want %q (reason: %s)",
 						lineNum, command, resp.Decision, want, resp.Reason)
