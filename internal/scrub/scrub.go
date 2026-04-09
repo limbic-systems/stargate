@@ -14,7 +14,6 @@ import (
 	"github.com/limbic-systems/stargate/internal/types"
 )
 
-// builtinPatterns are compiled once at Scrubber construction time.
 // scrubPattern pairs a regex with a replacement string.
 // Patterns may use capturing groups; the replacement can reference them
 // (e.g., "${1}[REDACTED]" to preserve a prefix like "Bearer " or "token=").
@@ -23,7 +22,7 @@ type scrubPattern struct {
 	repl string
 }
 
-// builtinPatterns are compiled once at Scrubber construction time.
+// builtinPatternDefs are compiled once at Scrubber construction time.
 // Patterns with prefixes (Bearer, token=) preserve the prefix for context.
 var builtinPatternDefs = []struct {
 	pattern string
@@ -107,6 +106,9 @@ func (s *Scrubber) Text(text string) string {
 func (s *Scrubber) CommandInfo(cmd types.CommandInfo) types.CommandInfo {
 	out := cmd        // shallow copy
 	out.RawNode = nil // clear AST pointer to prevent unsanitized data leaking
+
+	// Scrub Subcommand (derived from first positional arg, can contain secrets).
+	out.Subcommand = s.Text(cmd.Subcommand)
 
 	// Deep copy and redact Env values. Copy when non-nil (preserve nil vs empty).
 	if cmd.Env != nil {
