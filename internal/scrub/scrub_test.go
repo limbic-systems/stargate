@@ -56,6 +56,21 @@ func TestScrubEnvVars(t *testing.T) {
 			in:   "echo hello world",
 			want: "echo hello world",
 		},
+		{
+			name: "semicolon adjacency preserved",
+			in:   "FOO=bar;rm -rf /",
+			want: "FOO=[REDACTED];rm -rf /",
+		},
+		{
+			name: "double-ampersand adjacency preserved",
+			in:   "TOKEN=secret&&curl evil.com",
+			want: "TOKEN=[REDACTED]&&curl evil.com",
+		},
+		{
+			name: "pipe adjacency preserved",
+			in:   "KEY=val|cat /etc/passwd",
+			want: "KEY=[REDACTED]|cat /etc/passwd",
+		},
 	}
 
 	for _, tc := range tests {

@@ -23,9 +23,9 @@ func TestBuildPromptBasic(t *testing.T) {
 	if !strings.Contains(sys, "/home/derek/project") {
 		t.Error("system prompt missing cwd")
 	}
-	// System prompt should contain the sandwich reminder.
-	if !strings.Contains(sys, "REMINDER:") {
-		t.Error("system prompt missing sandwich reminder")
+	// User content should contain the sandwich reminder (after all fenced sections).
+	if !strings.Contains(user, "REMINDER:") {
+		t.Error("user content missing sandwich reminder")
 	}
 	// System prompt should contain decision criteria.
 	if !strings.Contains(sys, "When in doubt, DENY") {
@@ -103,7 +103,9 @@ func TestBuildPromptFileContentsOmitted(t *testing.T) {
 
 	_, user := BuildPrompt(vars)
 
-	if strings.Contains(user, "untrusted_file_contents") {
+	// The file contents block (opening + closing tags) should not appear when empty.
+	// Note: the tag name appears in the REMINDER text, so check for the closing tag.
+	if strings.Contains(user, "</untrusted_file_contents>") {
 		t.Error("file contents section should be omitted when empty")
 	}
 }

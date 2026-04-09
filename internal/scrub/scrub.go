@@ -79,11 +79,12 @@ func (s *Scrubber) Text(text string) string {
 	return result
 }
 
-// CommandInfo returns a deep copy of the CommandInfo with secrets redacted.
+// CommandInfo returns a sanitized copy of the CommandInfo with secrets redacted.
 // Env values are replaced with [REDACTED]; args matching token patterns are
 // redacted. The original CommandInfo is not modified.
 func (s *Scrubber) CommandInfo(cmd types.CommandInfo) types.CommandInfo {
-	out := cmd // shallow copy
+	out := cmd    // shallow copy
+	out.RawNode = nil // clear AST pointer to prevent unsanitized data leaking
 
 	// Deep copy and redact Env values.
 	if len(cmd.Env) > 0 {
