@@ -1126,6 +1126,45 @@ git commit -m "test(classifier): add command corpus test suite with evasion vect
 
 Goal: Scope definitions, resolver interface, built-in resolvers, scope-bound rule matching.
 
+> **M3 Retrospective (post-implementation):** 28 threads, 10 rounds, 17 commits.
+> Significant improvement over M2 (61 threads) and M1 (84 threads). The
+> pre-implementation panel review with edge case enumeration was highly effective
+> — only 2 security issues were found during code review (invalid repos/ path
+> fallback, relative CWD resolving against process dir), both of which could
+> have been caught by the panel with more specific attack scenarios.
+>
+> **Three patterns drove the review tail:**
+>
+> 1. **Resolver input validation (10 threads)** — URL parsing edge cases
+>    (schemeless detection, port validation, case normalization, file extension
+>    false positives) were the largest category. **Lesson:** For any component
+>    that parses untrusted input, enumerate the input space exhaustively in the
+>    spec: valid inputs, boundary cases, adversarial inputs, and common false
+>    positives. The spec had the right structure for github_repo_owner (4 steps)
+>    but url_domain was underspecified.
+>
+> 2. **Architecture ownership (8 threads)** — context threading, version
+>    injection, scope construction boilerplate, adapter optimization. These
+>    emerged from "who owns what" not being explicit. **Lesson:** When a new
+>    package introduces interfaces, decide at design time where construction
+>    lives and how context/config flows. The types extraction refactor (moving
+>    CommandInfo + interfaces to internal/types) resolved the circular import
+>    and let the engine own its dependencies.
+>
+> 3. **Copilot hallucinations (3 threads)** — repeated claims about a
+>    nonexistent `indexOf` function. **Lesson:** Automated reviewers can
+>    hallucinate. Always verify against the actual codebase before acting.
+>
+> **What the design verification prevented:** The panel caught GH_REPO env var
+> handling, git remote URL format coverage, gh api path canonicalization, and
+> bare-wildcard scope rejection BEFORE implementation. These would have been
+> ~15 additional threads.
+>
+> **Trend:** M1: 84 threads → M2: 61 → M3: 28. The milestone transition
+> protocol is working. The remaining review tail is primarily input validation
+> edge cases, which are best caught by exhaustive input-space enumeration in
+> the spec.
+
 ### Task 3.1: Scope matching with glob support
 
 **Files:**

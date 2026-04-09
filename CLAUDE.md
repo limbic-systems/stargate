@@ -61,9 +61,11 @@ After a PR is created and pushed, run an automated review loop:
 
 3. **Re-launch the background poller** — return to step 1 with a new background Bash command.
 
-4. **Terminal state:** Copilot's review says "generated no new comments" AND 0 unresolved threads → halt and await instructions.
+4. **Terminal state:** Copilot's LATEST review says "generated no new comments" AND 0 unresolved threads → halt and await instructions. **The review must be fresh** — verify the review ID is different from the last known stale ID to avoid false terminal detection. Track the stale ID in the polling command.
 
-**Critical:** Always use `--paginate` on GitHub API list endpoints. Without it, reviews beyond the first page (30 items) are silently missed.
+**Critical:**
+- Always use `--paginate` on GitHub API list endpoints. Without it, reviews beyond the first page (30 items) are silently missed.
+- Automated reviewers (Copilot) can hallucinate about code that doesn't exist. Always verify findings against the actual codebase before implementing.
 
 ### Layer-Impact Assessment
 
