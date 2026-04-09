@@ -460,24 +460,31 @@ func (c *Classifier) buildASTTextSummary(cmds []rules.CommandInfo) string {
 	return strings.Join(parts, "\n")
 }
 
-// truncateReasoning truncates reasoning to maxLen characters for API responses.
+// truncateReasoning truncates reasoning to maxLen runes for API responses.
 // maxLen == 0 means omit reasoning entirely (per spec: "Set to 0 to omit").
+// Uses rune count (not byte length) to avoid splitting multi-byte UTF-8 sequences.
 func truncateReasoning(reasoning string, maxLen int) string {
 	if maxLen == 0 {
 		return ""
 	}
-	if maxLen < 0 || len(reasoning) <= maxLen {
+	if maxLen < 0 {
 		return reasoning
 	}
-	return reasoning[:maxLen] + "..."
+	runes := []rune(reasoning)
+	if len(runes) <= maxLen {
+		return reasoning
+	}
+	return string(runes[:maxLen]) + "..."
 }
 
 // truncate is a convenience for short truncation (e.g., in reason strings).
+// Uses rune count for UTF-8 safety.
 func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
+	runes := []rune(s)
+	if len(runes) <= maxLen {
 		return s
 	}
-	return s[:maxLen] + "..."
+	return string(runes[:maxLen]) + "..."
 }
 
 // buildASTSummary derives an ASTSummary from the parsed CommandInfo slice.
