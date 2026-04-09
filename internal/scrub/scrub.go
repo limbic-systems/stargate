@@ -28,12 +28,17 @@ var builtinPatternStrings = []string{
 
 // envAssignRe matches VAR=value at the start of a command or after whitespace.
 // Captures: (1) start-of-string or whitespace, (2) VAR= prefix, (3) value to redact.
-// Limitation: only matches unquoted single-token values and stops before
-// common shell metacharacters so adjacent operators are preserved (e.g.,
-// FOO=bar;rm stays as FOO=[REDACTED];rm, not FOO=[REDACTED]).
-// Quoted values like FOO="a b" are partially matched. The AST-level
-// CommandInfo.Env scrubbing (which sees parsed key-value pairs) handles
-// quoted assignments correctly; this is defense-in-depth for simple cases.
+// Limitations:
+//   - Only matches POSIX-convention uppercase variable names ([A-Z_][A-Z0-9_]*).
+//     Lowercase/mixed-case names (e.g., github_token=...) are NOT matched to
+//     avoid false positives on config file key=value pairs. The built-in token
+//     patterns catch common secrets regardless of assignment form.
+//   - Only matches unquoted single-token values and stops before common shell
+//     metacharacters so adjacent operators are preserved (FOO=bar;rm stays as
+//     FOO=[REDACTED];rm).
+//   - Quoted values like FOO="a b" are partially matched. The AST-level
+//     CommandInfo.Env scrubbing handles quoted assignments correctly; this
+//     regex is defense-in-depth for simple cases.
 var envAssignRe = regexp.MustCompile(`(^|\s)([A-Z_][A-Z0-9_]*=)([^\s;|&()<>]+)`)
 
 // Scrubber applies secret redaction using compiled regex patterns.
