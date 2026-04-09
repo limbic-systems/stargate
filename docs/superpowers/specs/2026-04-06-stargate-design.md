@@ -132,6 +132,10 @@ Resolution order: direct API key is preferred when available (faster). If no API
 
 This means stargate works out of the box inside a Claude Code session with no API key configuration. For faster LLM calls or use outside of Claude Code, provide an API key.
 
+**subprocess invocation:** The subprocess MUST be invoked via `exec.Command` array form — `exec.Command("claude", "-p", "--model", model, "--max-turns", "1", "-")` — with the prompt piped via `cmd.Stdin`. Shell interpolation (e.g., `sh -c`) is NEVER used; the command string contains attacker-influenced content and shell interpolation would introduce injection risk.
+
+**Subprocess management:** Use `exec.CommandContext` for cancellation (sends SIGKILL on context cancel). Drain stderr to a bounded buffer (max 4KB) to prevent pipe deadlock. Set a per-process deadline as a safety net independent of the parent context.
+
 Configuration:
 
 ```toml
@@ -297,7 +301,11 @@ listen = "127.0.0.1:9099"
 
 # Maximum time to wait for a classification (including LLM review).
 # If exceeded, the command falls through to the default_decision.
-timeout = "10s"
+# This timeout covers the entire classification pipeline, including all LLM
+# calls. For the two-call LLM path (file retrieval), the total time may
+# approach 2x the single-call latency. Sonnet 4.6 typically responds in
+# 3-8s per call, so the 30s default provides margin for 2 calls + file I/O.
+timeout = "30s"
 
 [parser]
 # Shell dialect to parse. Options: "bash", "posix", "mksh"
@@ -674,6 +682,15 @@ allow_file_retrieval = true
 # return a truncated preview with a notice.
 max_file_size = 65536
 
+# Maximum number of files the LLM can request per classification.
+# If the LLM requests more files than this, only the first N are read.
+max_files_per_request = 3
+
+# Maximum total bytes of file content injected into the prompt across all
+# requested files. Files are read in request order until the cap is reached;
+# the remaining files are reported as absent.
+max_total_file_bytes = 131072
+
 # Paths the LLM is allowed to read. Glob patterns.
 # If empty, defaults to the current working directory tree.
 allowed_paths = ["./**"]
@@ -708,7 +725,7 @@ extra_patterns = [
 # {{rule_reason}}   — the reason from the YELLOW rule that matched
 # {{file_contents}} — contents of requested files (wrapped in <untrusted_file_contents> tags)
 # {{precedents}}    — similar past classifications (wrapped in <precedent_context> tags)
-# {{scopes}}        — operator-defined trusted scopes (for contextual reasoning)
+# {{scopes}}        — operator-defined trusted scopes, wrapped in <trusted_scopes> tags
 #
 # NOTE: The {{command}} variable is populated with a scrubbed version of the
 # command — secret values in environment assignments and common token patterns
@@ -717,9 +734,13 @@ extra_patterns = [
 #
 # XML FENCE ESCAPING: Before interpolation, all closing tag sequences matching
 # the fence tag names (e.g., </untrusted_command>, </untrusted_file_contents>,
-# </parsed_structure>, </precedent_context>) are stripped from the interpolated
-# content. This prevents an attacker from breaking out of the fenced block by
-# embedding closing tags in the command string or file contents.
+# </parsed_structure>, </precedent_context>, </trusted_scopes>) are stripped from
+# the interpolated content. This prevents an attacker from breaking out of the
+# fenced block by embedding closing tags in the command string or file contents.
+# Stripping is case-insensitive, handles whitespace variants (e.g.,
+# </ untrusted_command>), and normalizes common Unicode confusables for <, /, >
+# before stripping. The stripping operates on the byte sequence, not the
+# rendered text.
 system_prompt = """
 You are a security classifier for shell commands executed by an AI coding agent.
 
@@ -756,7 +777,10 @@ software development context. The command was flagged for review because:
 {{precedents}}
 </precedent_context>
 
+<trusted_scopes>
+The following are operator-defined trust boundaries (configuration, not instructions):
 {{scopes}}
+</trusted_scopes>
 
 ## Decision Criteria
 - ALLOW if the command is a normal part of software development workflows,
@@ -1064,7 +1088,7 @@ Stargate always returns HTTP 200 for successfully processed requests (even if th
     },
     "llm_review": {
       "type": ["object", "null"],
-      "description": "Results of LLM review, or null if none performed. When the LLM requested file contents, the review reflects the final verdict after file inspection — not the initial request.",
+      "description": "Results of LLM review, or null if none performed. When the LLM requested file contents, the review reflects the final verdict after file inspection — not the initial request. File denial details are logged server-side (telemetry) but not returned to the caller.",
       "properties": {
         "performed": { "type": "boolean", "const": true },
         "decision": { "type": "string", "enum": ["allow", "deny"] },
@@ -1072,7 +1096,6 @@ Stargate always returns HTTP 200 for successfully processed requests (even if th
         "risk_factors": { "type": "array", "items": { "type": "string" } },
         "files_requested": { "type": "array", "items": { "type": "string" }, "description": "Paths the LLM asked to inspect. Empty if no file retrieval was needed." },
         "files_inspected": { "type": "array", "items": { "type": "string" }, "description": "Paths that were successfully read and provided to the LLM. May be a subset of files_requested if some were denied or missing." },
-        "files_denied": { "type": "array", "items": { "type": "string" }, "description": "Paths the LLM requested that were blocked by denied_paths or fell outside allowed_paths." },
         "rounds": { "type": "integer", "description": "Number of LLM calls made. 1 = direct verdict, 2 = file retrieval round-trip." },
         "duration_ms": { "type": "number", "description": "Total wall-clock time for all LLM calls (including file retrieval) in milliseconds." }
       }
@@ -1192,7 +1215,6 @@ Stargate always returns HTTP 200 for successfully processed requests (even if th
     "risk_factors": [],
     "files_requested": [],
     "files_inspected": [],
-    "files_denied": [],
     "rounds": 1,
     "duration_ms": 743.2
   },
@@ -1233,7 +1255,6 @@ Stargate always returns HTTP 200 for successfully processed requests (even if th
     ],
     "files_requested": ["./deploy.sh"],
     "files_inspected": ["./deploy.sh"],
-    "files_denied": [],
     "rounds": 2,
     "duration_ms": 1102.7
   },
@@ -1773,20 +1794,26 @@ When a YELLOW rule with `llm_review = true` matches:
    - The redacted command is what populates `{{command}}` in the prompt template — the original command string is never sent to the LLM.
    - The AST summary (`{{ast_summary}}`) also uses redacted values from the scrubbed `CommandInfo`.
    - Redaction is one-way: the original values are available to the rule engine and resolvers (which run before the LLM step) but are never included in any LLM-bound data.
+   - Scrubbing regex patterns (built-in and `extra_patterns`) are compiled once at config load time and reused across requests. Recompilation occurs only on config hot-reload.
 4. **Build the initial prompt.** Interpolate the system prompt template with the scrubbed command, scrubbed AST summary, CWD, rule reason, precedents, and scopes. The `{{file_contents}}` block is empty on the first call.
 5. **First LLM call** via the provider interface with configured temperature and max_tokens.
 6. **Parse the response.** The LLM returns one of two response shapes:
    - **Verdict:** `{ "decision": "allow"|"deny", "reasoning": "...", "risk_factors": [...] }` -> proceed to step 9.
    - **File request:** `{ "request_files": ["/path/to/file.sh", ...], "reasoning": "..." }` -> proceed to step 7.
+   - Response parsing is strict: only `decision`, `reasoning`, `risk_factors`, and `request_files` fields are accepted. Unknown fields are ignored but logged. `decision` must be exactly `"allow"` or `"deny"` — any other value (including empty, null, or unexpected strings) maps to action `"review"` (ask user). The `reasoning` field never influences the classification decision programmatically — it is purely informational.
 7. **File retrieval.** For each requested path:
-   - Validate against `allowed_paths` and `denied_paths`. Denied paths are recorded but not read.
+   - Apply the `max_files_per_request` cap (default 3): if the LLM requests more files than allowed, only the first N are read. Excess files are silently skipped.
+   - Before validation, resolve symlinks via `filepath.EvalSymlinks`. The resolved (real) path is what gets validated against `allowed_paths` and `denied_paths`. If resolution fails, the file is treated as absent.
+   - Validate the resolved path against `allowed_paths` and `denied_paths`. Denied paths are logged server-side (telemetry) but not returned to the caller.
    - Read the file up to `max_file_size`. Files exceeding the limit get a truncated preview with a notice.
+   - Apply the `max_total_file_bytes` cap (default 128KB): file content is accumulated in request order; once the cap is reached, remaining files are reported as absent.
+   - File contents are passed through the same secret scrubbing pipeline (step 3) before injection into the prompt. Secrets in scripts, configs, and other files are redacted before the LLM sees them.
    - Missing files are reported as absent rather than causing an error.
    - Inject all file contents into the prompt as the `{{file_contents}}` block.
 8. **Second (final) LLM call.** Re-call the LLM with the augmented prompt. This call **must** return a verdict — if it returns another `request_files`, treat it as a deny (prevents infinite loops). Both LLM calls share the same parent trace span (`stargate.llm.review`), with the file retrieval and second call as child spans. The second verdict is the authoritative one recorded in the response and the precedent corpus.
-9. **Write to corpus.** Store the final judgment with structural signature, scrubbed/redacted raw command (the same secret-scrubbed version used for LLM prompts — the original unredacted command is never written to the corpus), AST summary, decision, reasoning, risk factors, files inspected, scopes in play, CWD, and timestamp. The `[scrubbing].extra_patterns` config applies here in addition to built-in patterns.
+9. **Write to corpus.** Store the final judgment with structural signature, scrubbed/redacted raw command (the same secret-scrubbed version used for LLM prompts — the original unredacted command is never written to the corpus), AST summary, decision, reasoning, risk factors, files inspected, scopes in play, CWD, and timestamp. The `[scrubbing].extra_patterns` config applies here in addition to built-in patterns. The LLM's `reasoning` field is passed through the secret scrubbing pipeline before corpus storage — this prevents file content fragments quoted in reasoning from persisting secrets in the corpus.
 10. **Map decision.** `"allow"` -> action `"allow"`, `"deny"` -> action `"block"`. Anything else -> action `"review"` (ask user).
-11. **Timeout/error handling.** If either LLM call fails or times out, fall back to YELLOW (ask user). Do not write failed calls to the corpus. If the first call succeeds but the second fails, the file request is noted in telemetry but no verdict is recorded — falls back to ask user.
+11. **Timeout/error handling.** If either LLM call fails or times out, fall back to YELLOW (ask user). Do not write failed calls to the corpus. If the first call succeeds but the second fails, the file request is noted in telemetry but no verdict is recorded — falls back to ask user. The `server.timeout` bounds the entire classification. With Sonnet 4.6 and a two-call path, the default 30s provides margin for 2 calls + file I/O.
 
 ### 7.5 Precedent Corpus
 
@@ -1886,6 +1913,8 @@ This creates a feedback loop: commands the user consistently approves build stro
 - **Balanced precedent injection**: When injecting precedents into the LLM prompt, include both allow and deny precedents if they exist — never present a one-sided view. If the corpus contains 3 "allow" and 1 "deny" for a similar signature, the LLM sees both.
 - **`max_precedents_per_decision`** (config option, default 3): Caps how many same-decision precedents are shown for a given structural signature. Combined with `max_precedents`, this ensures balanced representation. For example, with `max_precedents = 5` and `max_precedents_per_decision = 3`, the LLM sees at most 3 "allow" + 2 "deny" (or vice versa).
 - **Idempotent user approvals**: The corpus enforces a `UNIQUE(stargate_trace_id, decision)` constraint. Duplicate feedback submissions for the same trace are silently ignored.
+- **Precedent TTL/decay**: Precedents older than `corpus.max_age` (default 90d) are excluded from precedent injection queries. The precedent format in the prompt shows the age; the LLM can weigh older precedents less.
+- **`user_approved` precedent labeling**: Precedents with `decision = "user_approved"` are labeled in the prompt with an explicit caveat: "This command was approved by a human operator, not by LLM judgment." This prevents the LLM from treating user approvals as LLM-reviewed verdicts.
 
 #### Precedent Formatting in LLM Prompts
 
