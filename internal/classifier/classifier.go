@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -155,6 +156,11 @@ func New(cfg *config.Config) (*Classifier, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return nil, fmt.Errorf("classifier: determine server working directory: %w", err)
+	}
+	// Resolve symlinks so allowed_paths globs match EvalSymlinks'd file paths
+	// (e.g., macOS /var → /private/var).
+	if resolved, err := filepath.EvalSymlinks(cwd); err == nil {
+		cwd = resolved
 	}
 
 	return &Classifier{

@@ -92,13 +92,13 @@ func ResolveFiles(paths []string, cfg FileResolverConfig) []FileResult {
 		}
 		totalBytes += len(content)
 
-		// Step 7: Scrub content.
+		// Step 6: Scrub content.
 		text := string(content)
 		if cfg.Scrubber != nil {
 			text = cfg.Scrubber.Text(text)
 		}
 
-		// Step 8: Build sanitized label.
+		// Step 7: Build result.
 		results[i] = FileResult{
 			Label:     label, // use sanitized requested path, not resolved, for consistency
 			FullPath: absPath, // requested path (not symlink-resolved) for API response
