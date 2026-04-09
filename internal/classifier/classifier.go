@@ -454,7 +454,7 @@ func (c *Classifier) buildASTTextSummary(cmds []rules.CommandInfo) string {
 		if len(scrubbedCmd.Args) > 0 {
 			line += " args=" + strings.Join(scrubbedCmd.Args, ",")
 		}
-		line += " context=" + contextString(&rules.CommandInfo{Context: scrubbedCmd.Context})
+		line += " context=" + contextLabel(scrubbedCmd.Context)
 		parts = append(parts, line)
 	}
 	return strings.Join(parts, "\n")
@@ -524,18 +524,23 @@ func buildASTSummary(cmds []rules.CommandInfo) *ASTSummary {
 // contextString derives a human-readable context label from a CommandInfo,
 // matching the spec's ast.commands[*].context enum.
 func contextString(cmd *rules.CommandInfo) string {
+	return contextLabel(cmd.Context)
+}
+
+// contextLabel derives a human-readable context label from a CommandContext.
+func contextLabel(ctx rules.CommandContext) string {
 	switch {
-	case cmd.Context.InSubstitution:
+	case ctx.InSubstitution:
 		return "substitution"
-	case cmd.Context.InCondition:
+	case ctx.InCondition:
 		return "condition"
-	case cmd.Context.InFunction != "":
+	case ctx.InFunction != "":
 		return "function"
-	case cmd.Context.SubshellDepth > 0:
+	case ctx.SubshellDepth > 0:
 		return "subshell"
-	case cmd.Context.PipelinePosition == 1:
+	case ctx.PipelinePosition == 1:
 		return "pipeline_source"
-	case cmd.Context.PipelinePosition >= 2:
+	case ctx.PipelinePosition >= 2:
 		return "pipeline_sink"
 	default:
 		return "top_level"

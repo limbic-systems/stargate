@@ -28,6 +28,9 @@ type rateLimitedProvider struct {
 // If maxCallsPerMinute <= 0, rate limiting is disabled and all calls pass
 // through to the underlying provider unchanged.
 func NewRateLimitedProvider(provider ReviewerProvider, maxCallsPerMinute int) ReviewerProvider {
+	if provider == nil {
+		return nil
+	}
 	if maxCallsPerMinute <= 0 {
 		return provider
 	}
