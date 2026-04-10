@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"time"
@@ -233,6 +234,18 @@ func Load(path string) (*Config, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
+
+	// Capture the server's working directory (symlink-resolved) so all
+	// consumers of Config.ServerCWD can trust it's the canonical path.
+	// Done in Load so it's set exactly once at startup.
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("config: determine working directory: %w", err)
+	}
+	if resolved, err := filepath.EvalSymlinks(cwd); err == nil {
+		cwd = resolved
+	}
+	cfg.ServerCWD = cwd
 
 	return &cfg, nil
 }
