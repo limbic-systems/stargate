@@ -15,10 +15,20 @@ import (
 )
 
 // TraceInfo holds the classification context needed to verify and record feedback.
+// Structural fields are carried from the original classification so user_approved
+// corpus entries have the same signature/command_names as the original judgment.
 type TraceInfo struct {
-	Decision  string // rule tier (e.g., "yellow") for HMAC recomputation
-	ToolUseID string
-	TraceID   string
+	Decision      string   // rule tier (e.g., "yellow") for HMAC recomputation
+	ToolUseID     string
+	TraceID       string
+	Signature     string   // structural signature from original classification
+	SignatureHash string   // SHA-256 of signature
+	CommandNames  []string // command names from original classification
+	Flags         []string // flags from original classification
+	RawCommand    string   // scrubbed raw command
+	CWD           string
+	SessionID     string
+	Agent         string
 }
 
 // FeedbackRequest is the JSON body for POST /feedback.
@@ -53,12 +63,8 @@ func NewHandler(ctx context.Context, c *corpus.Corpus, secret []byte) *Handler {
 // RecordTrace stores classification context so that a subsequent feedback
 // submission can be verified and recorded. Called by the classifier after
 // YELLOW decisions.
-func (h *Handler) RecordTrace(traceID, toolUseID, decision string) {
-	h.traceMap.Set(traceID, TraceInfo{
-		Decision:  decision,
-		ToolUseID: toolUseID,
-		TraceID:   traceID,
-	}, 5*time.Minute)
+func (h *Handler) RecordTrace(info TraceInfo) {
+	h.traceMap.Set(info.TraceID, info, 5*time.Minute)
 }
 
 // HandleFeedback processes POST /feedback requests.
@@ -98,10 +104,20 @@ func (h *Handler) HandleFeedback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Write user_approved to corpus for executed YELLOW decisions.
+	// The entry carries structural fields from the original classification
+	// so it's discoverable by future precedent lookups.
 	if req.Outcome == "executed" && info.Decision == "yellow" && h.corpus != nil {
 		entry := corpus.PrecedentEntry{
-			Decision: "user_approved",
-			TraceID:  info.TraceID,
+			Signature:     info.Signature,
+			SignatureHash: info.SignatureHash,
+			CommandNames:  info.CommandNames,
+			Flags:         info.Flags,
+			RawCommand:    info.RawCommand,
+			CWD:           info.CWD,
+			Decision:      "user_approved",
+			TraceID:       info.TraceID,
+			SessionID:     info.SessionID,
+			Agent:         info.Agent,
 		}
 		if err := h.corpus.Write(entry); err != nil {
 			// Non-fatal: rate limiting or DB errors are logged but don't fail the request.

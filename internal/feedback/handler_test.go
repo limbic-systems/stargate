@@ -19,7 +19,7 @@ func TestHandleFeedbackValidHMAC(t *testing.T) {
 	traceID := "sg_tr_abc123"
 	toolUseID := "tu_001"
 	decision := "yellow"
-	h.RecordTrace(traceID, toolUseID, decision)
+	h.RecordTrace(TraceInfo{Decision: decision, ToolUseID: toolUseID, TraceID: traceID})
 
 	token := GenerateToken(secret, traceID, toolUseID, decision)
 	body := FeedbackRequest{
@@ -50,7 +50,7 @@ func TestHandleFeedbackInvalidHMAC(t *testing.T) {
 
 	traceID := "sg_tr_abc123"
 	toolUseID := "tu_001"
-	h.RecordTrace(traceID, toolUseID, "yellow")
+	h.RecordTrace(TraceInfo{Decision: "yellow", ToolUseID: toolUseID, TraceID: traceID})
 
 	body := FeedbackRequest{
 		StargateTrID:  traceID,
@@ -136,7 +136,7 @@ func TestHandleFeedbackIdempotent(t *testing.T) {
 	traceID := "sg_tr_idempotent"
 	toolUseID := "tu_001"
 	decision := "yellow"
-	h.RecordTrace(traceID, toolUseID, decision)
+	h.RecordTrace(TraceInfo{Decision: decision, ToolUseID: toolUseID, TraceID: traceID})
 
 	token := GenerateToken(secret, traceID, toolUseID, decision)
 	body := FeedbackRequest{

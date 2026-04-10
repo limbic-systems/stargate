@@ -264,30 +264,30 @@ func handleCorpus(args []string, configPath string, verbose bool) int {
 }
 
 // openCorpusDB loads config and opens the corpus database.
-// Returns nil corpus and prints an error on failure.
-func openCorpusDB(configPath string) (*corpus.Corpus, error) {
+// Returns the corpus and the loaded config, or an error on failure.
+func openCorpusDB(configPath string) (*corpus.Corpus, *config.Config, error) {
 	if configPath == "" {
-		return nil, fmt.Errorf("no config file found; pass --config or set STARGATE_CONFIG")
+		return nil, nil, fmt.Errorf("no config file found; pass --config or set STARGATE_CONFIG")
 	}
 	cfg, err := config.Load(configPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load config: %w", err)
+		return nil, nil, fmt.Errorf("failed to load config: %w", err)
 	}
 	if !cfg.Corpus.Enabled {
-		return nil, fmt.Errorf("corpus is disabled in config (corpus.enabled = false)")
+		return nil, nil, fmt.Errorf("corpus is disabled in config (corpus.enabled = false)")
 	}
 	if cfg.Corpus.Path == "" {
-		return nil, fmt.Errorf("corpus.path is not set in config")
+		return nil, nil, fmt.Errorf("corpus.path is not set in config")
 	}
 	c, err := corpus.Open(context.Background(), cfg.Corpus)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open corpus: %w", err)
+		return nil, nil, fmt.Errorf("failed to open corpus: %w", err)
 	}
-	return c, nil
+	return c, cfg, nil
 }
 
 func handleCorpusStats(args []string, configPath string, _ bool) int {
-	c, err := openCorpusDB(configPath)
+	c, cfg, err := openCorpusDB(configPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "corpus stats: %v\n", err)
 		return 1
@@ -322,18 +322,15 @@ func handleCorpusStats(args []string, configPath string, _ bool) int {
 		fmt.Println("Newest entry: (none)")
 	}
 
-	// DB file size: resolve path from config.
-	cfg, err := config.Load(configPath)
-	if err == nil {
-		dbPath := cfg.Corpus.Path
-		if len(dbPath) > 1 && dbPath[:2] == "~/" {
-			if home, err := os.UserHomeDir(); err == nil {
-				dbPath = home + "/" + dbPath[2:]
-			}
+	// DB file size: resolve path from config (already loaded by openCorpusDB).
+	dbPath := cfg.Corpus.Path
+	if len(dbPath) > 1 && dbPath[:2] == "~/" {
+		if home, err := os.UserHomeDir(); err == nil {
+			dbPath = home + "/" + dbPath[2:]
 		}
-		if info, err := os.Stat(dbPath); err == nil {
-			fmt.Printf("DB file size: %d bytes\n", info.Size())
-		}
+	}
+	if info, err := os.Stat(dbPath); err == nil {
+		fmt.Printf("DB file size: %d bytes\n", info.Size())
 	}
 
 	return 0
@@ -347,19 +344,12 @@ func handleCorpusSearch(args []string, configPath string, _ bool) int {
 
 	command := strings.Join(args, " ")
 
-	c, err := openCorpusDB(configPath)
+	c, cfg, err := openCorpusDB(configPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "corpus search: %v\n", err)
 		return 1
 	}
 	defer c.Close()
-
-	// Load config for lookup parameters.
-	cfg, err := config.Load(configPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "corpus search: load config: %v\n", err)
-		return 1
-	}
 
 	// Parse and walk the command to get CommandInfo.
 	cmds, err := parser.ParseAndWalk(command, "bash", nil)
@@ -373,15 +363,8 @@ func handleCorpusSearch(args []string, configPath string, _ bool) int {
 
 	// Build lookup config from corpus config defaults.
 	maxAge := 90 * 24 * time.Hour
-	if cfg.Corpus.MaxAge != "" {
-		if d, err := time.ParseDuration(cfg.Corpus.MaxAge); err == nil {
-			maxAge = d
-		} else {
-			var days int
-			if _, err := fmt.Sscanf(cfg.Corpus.MaxAge, "%dd", &days); err == nil {
-				maxAge = time.Duration(days) * 24 * time.Hour
-			}
-		}
+	if parsed, err := config.ParseMaxAge(cfg.Corpus.MaxAge); err == nil && parsed > 0 {
+		maxAge = parsed
 	}
 
 	minSim := cfg.Corpus.MinSimilarity
@@ -427,7 +410,7 @@ func handleCorpusSearch(args []string, configPath string, _ bool) int {
 			rawCmd = "(no raw command stored)"
 		}
 		fmt.Printf("ID: %d  decision: %-12s  similarity: %.2f  age: %s\n",
-			r.CreatedAt.UnixNano(), r.Decision, r.Similarity, ageStr)
+			r.ID, r.Decision, r.Similarity, ageStr)
 		fmt.Printf("  command:   %s\n", rawCmd)
 		if reasoning != "" {
 			fmt.Printf("  reasoning: %s\n", reasoning)
@@ -450,7 +433,7 @@ func handleCorpusInspect(args []string, configPath string, _ bool) int {
 		return 1
 	}
 
-	c, err := openCorpusDB(configPath)
+	c, _, err := openCorpusDB(configPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "corpus inspect: %v\n", err)
 		return 1
@@ -518,7 +501,7 @@ func handleCorpusInvalidate(args []string, configPath string, _ bool) int {
 		return 1
 	}
 
-	c, err := openCorpusDB(configPath)
+	c, _, err := openCorpusDB(configPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "corpus invalidate: %v\n", err)
 		return 1
@@ -554,7 +537,7 @@ func handleCorpusClear(args []string, configPath string, _ bool) int {
 		return 1
 	}
 
-	c, err := openCorpusDB(configPath)
+	c, _, err := openCorpusDB(configPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "corpus clear: %v\n", err)
 		return 1
@@ -573,7 +556,7 @@ func handleCorpusClear(args []string, configPath string, _ bool) int {
 }
 
 func handleCorpusExport(args []string, configPath string, _ bool) int {
-	c, err := openCorpusDB(configPath)
+	c, _, err := openCorpusDB(configPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "corpus export: %v\n", err)
 		return 1
@@ -615,7 +598,7 @@ func handleCorpusImport(args []string, configPath string, _ bool) int {
 		return 1
 	}
 
-	c, err := openCorpusDB(configPath)
+	c, _, err := openCorpusDB(configPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "corpus import: %v\n", err)
 		return 1

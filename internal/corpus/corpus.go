@@ -157,6 +157,10 @@ func createSchema(db *sql.DB) error {
 	CREATE UNIQUE INDEX IF NOT EXISTS idx_precedents_trace_decision
 		ON precedents (stargate_trace_id, decision)
 		WHERE decision = 'user_approved';
+
+	-- Note: idx_precedents_commands on the raw command_names TEXT column is
+	-- intentionally omitted. The json_each() virtual table join used by
+	-- LookupSimilar cannot leverage a B-tree index on the JSON column.
 	`
 	_, err := db.Exec(schema)
 	return err
@@ -199,18 +203,7 @@ func (c *Corpus) pruneLoop(ctx context.Context) {
 func (c *Corpus) prune() {
 	// Prune by age.
 	if c.cfg.MaxAge != "" {
-		var maxAge time.Duration
-		// Try Go duration first, then day format.
-		if d, err := time.ParseDuration(c.cfg.MaxAge); err == nil {
-			maxAge = d
-		} else {
-			// Parse "Nd" format.
-			var days int
-			if _, err := fmt.Sscanf(c.cfg.MaxAge, "%dd", &days); err == nil {
-				maxAge = time.Duration(days) * 24 * time.Hour
-			}
-		}
-		if maxAge > 0 {
+		if maxAge, err := config.ParseMaxAge(c.cfg.MaxAge); err == nil && maxAge > 0 {
 			cutoff := time.Now().UTC().Add(-maxAge).Format(time.RFC3339)
 			c.db.Exec("DELETE FROM precedents WHERE created_at < ?", cutoff) //nolint:errcheck
 		}

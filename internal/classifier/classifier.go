@@ -327,9 +327,14 @@ func (c *Classifier) Classify(ctx context.Context, req ClassifyRequest) *Classif
 	resp.Reason = result.Reason
 	resp.Rule = result.Rule
 
+	// Precompute structural signature for corpus and feedback (used by LLM review and trace recording).
+	signature, sigHash := corpus.ComputeSignature(cmds)
+	cmdNames := corpus.CommandNames(cmds)
+	cmdFlags := collectFlags(cmds)
+
 	// 6. LLM review — only for YELLOW decisions with llm_review=true.
 	if result.LLMReview && c.llmProvider != nil {
-		llmResult := c.reviewWithLLM(ctx, req, cmds, resp)
+		llmResult := c.reviewWithLLM(ctx, req, cmds, resp, signature, sigHash, cmdNames, cmdFlags)
 		resp.LLMReview = llmResult
 		resp.Timing.LLMMs = llmResult.DurationMs
 
@@ -358,7 +363,28 @@ func (c *Classifier) Classify(ctx context.Context, req ClassifyRequest) *Classif
 		token := feedback.GenerateToken(c.hmacSecret, traceID, toolUseID, resp.Decision)
 		resp.FeedbackToken = &token
 		if c.feedbackHandler != nil {
-			c.feedbackHandler.RecordTrace(traceID, toolUseID, resp.Decision)
+			sessionID, agent := "", ""
+			if req.Context != nil {
+				if v, ok := req.Context["session_id"].(string); ok {
+					sessionID = v
+				}
+				if v, ok := req.Context["agent"].(string); ok {
+					agent = v
+				}
+			}
+			c.feedbackHandler.RecordTrace(feedback.TraceInfo{
+				Decision:      resp.Decision,
+				ToolUseID:     toolUseID,
+				TraceID:       traceID,
+				Signature:     signature,
+				SignatureHash: sigHash,
+				CommandNames:  cmdNames,
+				Flags:         cmdFlags,
+				RawCommand:    c.scrubber.Command(req.Command),
+				CWD:           req.CWD,
+				SessionID:     sessionID,
+				Agent:         agent,
+			})
 		}
 	}
 
@@ -366,7 +392,7 @@ func (c *Classifier) Classify(ctx context.Context, req ClassifyRequest) *Classif
 }
 
 // reviewWithLLM runs the LLM review pipeline: cache → corpus → scrub → prompt → call → (files → call) → corpus write → cache write.
-func (c *Classifier) reviewWithLLM(ctx context.Context, req ClassifyRequest, cmds []rules.CommandInfo, resp *ClassifyResponse) *LLMReviewResult {
+func (c *Classifier) reviewWithLLM(ctx context.Context, req ClassifyRequest, cmds []rules.CommandInfo, resp *ClassifyResponse, sig, sigHash string, cmdNames, cmdFlags []string) *LLMReviewResult {
 	llmStart := time.Now()
 	result := &LLMReviewResult{
 		Performed:      true,
@@ -387,25 +413,13 @@ func (c *Classifier) reviewWithLLM(ctx context.Context, req ClassifyRequest, cmd
 		return result
 	}
 
-	// Compute structural signature for corpus operations.
-	sig, sigHash := corpus.ComputeSignature(cmds)
-	cmdNames := corpus.CommandNames(cmds)
-
 	// Corpus precedent lookup.
 	var precedentText string
 	var precedentsFound int
 	if c.corpus != nil {
 		maxAge := 24 * time.Hour * 90 // default 90 days
-		if c.corpusCfg.MaxAge != "" {
-			if d, err := time.ParseDuration(c.corpusCfg.MaxAge); err == nil {
-				maxAge = d
-			} else {
-				// Try "Nd" format.
-				var days int
-				if _, err := fmt.Sscanf(c.corpusCfg.MaxAge, "%dd", &days); err == nil {
-					maxAge = time.Duration(days) * 24 * time.Hour
-				}
-			}
+		if parsed, err := config.ParseMaxAge(c.corpusCfg.MaxAge); err == nil && parsed > 0 {
+			maxAge = parsed
 		}
 		lookupCfg := corpus.LookupConfig{
 			MinSimilarity:  c.corpusCfg.MinSimilarity,

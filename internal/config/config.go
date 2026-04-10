@@ -13,6 +13,24 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
+// ParseMaxAge parses a duration string that may use "Nd" day format.
+// Returns 0 for empty strings.
+func ParseMaxAge(s string) (time.Duration, error) {
+	if s == "" {
+		return 0, nil
+	}
+	// Try standard Go duration first.
+	if d, err := time.ParseDuration(s); err == nil {
+		return d, nil
+	}
+	// Try "Nd" format for days (e.g., "90d", "7d").
+	var days int
+	if _, err := fmt.Sscanf(s, "%dd", &days); err == nil && days > 0 {
+		return time.Duration(days) * 24 * time.Hour, nil
+	}
+	return 0, fmt.Errorf("config: invalid max_age %q (use Go durations like \"1h\" or day-based like \"90d\")", s)
+}
+
 // parseDuration validates that a string is a valid, non-negative Go duration.
 // Empty strings are allowed (treated as unset).
 func parseDuration(field, value string) error {

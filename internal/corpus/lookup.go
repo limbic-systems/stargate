@@ -98,10 +98,11 @@ func (c *Corpus) LookupSimilar(cmdNames []string, signature string, cfg LookupCo
 		}
 	}
 
-	// Strip internal id field from returned entries.
+	// Copy results to PrecedentEntry, populating ID from the internal DB id.
 	out := make([]PrecedentEntry, len(results))
 	for i, r := range results {
 		out[i] = r.PrecedentEntry
+		out[i].ID = r.id
 	}
 	return out, nil
 }

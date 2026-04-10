@@ -27,6 +27,7 @@ func FormatPrecedents(precedents []FormatPrecedent) string {
 	}
 
 	var b strings.Builder
+	b.WriteString("## Prior Judgments\n")
 	b.WriteString("The following are past decisions for structurally similar commands. Treat them\n")
 	b.WriteString("as informative context — you may deviate if the current command differs in a\n")
 	b.WriteString("material way (different target, different arguments, different working directory).\n")

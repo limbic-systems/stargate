@@ -154,6 +154,9 @@ func TestFormatPrecedents_InformativeHeader(t *testing.T) {
 
 	result := FormatPrecedents(p)
 
+	if !strings.Contains(result, "## Prior Judgments") {
+		t.Error("missing ## Prior Judgments header")
+	}
 	if !strings.Contains(result, "informative context") {
 		t.Error("missing informative context header")
 	}
