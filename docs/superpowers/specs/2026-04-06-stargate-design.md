@@ -909,14 +909,21 @@ max_precedents_per_polarity = 3
 # Command Cache — in-memory exact-command deduplication
 # ---------------------------------------------------------------------------
 # When a YELLOW+llm_review command is classified, the verdict is cached in
-# memory keyed on SHA-256(scrubbed_command + cwd). Subsequent identical
-# commands return the cached decision without an LLM call.
+# memory keyed on SHA-256(raw_command + cwd). Subsequent identical commands
+# return the cached decision+action without an LLM call.
+#
+# IMPORTANT: The cache key uses the RAW (pre-scrub) command, not the scrubbed
+# version. This prevents scrubbing collisions — two commands that differ only
+# by a secret token (which scrubs to [REDACTED]) produce different cache keys
+# and receive independent LLM evaluations.
 #
 # This is a performance cache, not a permanent approval. It is:
 #   - In-memory only (lost on restart)
 #   - Invalidated on config reload (SIGHUP) — rules/scopes may have changed
 #   - Short-lived (cache_ttl, default 1h)
-#   - Keyed on the EXACT scrubbed command + CWD, not structural signature
+#   - Keyed on the EXACT raw command + CWD, not structural signature
+#   - Stores decision (rule tier) and action (final outcome) only — not
+#     LLM reasoning (avoids replaying potentially adversarial text)
 #
 # The corpus (below) is the long-term memory. The command cache is ephemeral.
 # They are independent: a cache hit does not write to or read from the corpus.
@@ -926,6 +933,10 @@ command_cache_enabled = true
 
 # Time-to-live for cached decisions.
 command_cache_ttl = "1h"
+
+# Maximum number of cached entries. Prevents unbounded memory growth from
+# varied CWDs or diverse command patterns. LRU eviction when exceeded.
+command_cache_max_entries = 10000
 
 # ---------------------------------------------------------------------------
 # Corpus Lifecycle
@@ -1419,13 +1430,13 @@ feedback_token = HMAC-SHA256(server_secret, stargate_trace_id + "\x00" + tool_us
 - `server_secret` is a 256-bit random key generated at server startup and held only in memory.
 - `decision` refers to the rule-engine tier (`red`, `yellow`, `green`) — not the `action` field. This is intentional: `decision` is stable (determined by rule matching), while `action` can change based on LLM review. Binding the HMAC to `decision` ensures the token is tied to the original classification tier.
 - The `feedback_token` is returned in the ClassifyResponse and must be presented back to `/feedback`.
-- The `/feedback` endpoint recomputes the HMAC and rejects requests where the token does not match, returning `403 Forbidden` with `{ "error": "invalid feedback token" }`.
+- The `/feedback` endpoint recomputes the HMAC and compares using `hmac.Equal()` (constant-time comparison to prevent timing oracle attacks). Rejects with `403 Forbidden` and `{ "error": "invalid feedback token" }` on mismatch.
 - This prevents forged feedback from local processes that do not have access to the token (they would need to intercept the classify response).
 - The server secret rotates on every restart, which is acceptable since pending feedback for pre-restart classifications is best-effort anyway.
 
 #### Behavior
 
-1. Validates the `feedback_token` by recomputing `HMAC-SHA256(server_secret, stargate_trace_id + "\x00" + tool_use_id + "\x00" + decision)` and comparing. Rejects with 403 if the token does not match. Note: when a trace has expired from the in-memory map (TTL eviction), the server cannot recompute the HMAC because the original `decision` is no longer available. In this case, the feedback is silently dropped — no corpus write, no trace span — and the server returns `{ "status": "trace_expired" }`. This is the correct behavior because: (a) skipping HMAC validation would be a security hole, (b) rejecting with an error would violate the best-effort contract, (c) a no-op drop is safe since the feedback is informational, not critical.
+1. Validates the `feedback_token` by recomputing `HMAC-SHA256(server_secret, stargate_trace_id + "\x00" + tool_use_id + "\x00" + decision)` and comparing. Rejects with 403 if the token does not match. Note: when a trace has expired from the in-memory map (TTL eviction), the server cannot recompute the HMAC because the original `decision` is no longer available. In this case, the feedback is dropped — no corpus write, no trace span — and the server returns `{ "status": "trace_expired" }`. The event is logged at WARN level with the presented `stargate_trace_id` to enable anomaly detection on high-frequency expired feedback attempts. This is the correct behavior because: (a) skipping HMAC validation would be a security hole, (b) rejecting with an error would violate the best-effort contract, (c) a no-op drop is safe since the feedback is informational, not critical.
 2. Looks up `stargate_trace_id` to find the original classification.
 3. Creates a child span on the original OTel trace recording the user approval.
 4. If the original decision was YELLOW and outcome is `"executed"`, records a `"user_approved"` entry in the precedent corpus linked to the original judgment.
@@ -1908,7 +1919,7 @@ The precedent corpus is an SQLite database that stores past LLM classification j
 
 **File permissions:** The SQLite database file and its parent directory are created with `0600`/`0700` permissions respectively. At startup, if the file already exists with permissions looser than `0600`, a warning is logged. The database contains scrubbed command data and LLM reasoning — not secrets, but operational context that should be protected from other local users.
 
-**Goroutine lifecycle:** `Open()` accepts a `context.Context`. Background goroutines (pruning, TTL sweep) select on `ctx.Done()` for graceful shutdown. `Close()` cancels the context and waits for goroutines to exit via `sync.WaitGroup`. This prevents goroutine leaks in tests and ensures clean shutdown on SIGTERM.
+**Goroutine lifecycle:** `Open()` accepts a `context.Context`. Background goroutines (pruning, TTL sweep) select on `ctx.Done()` for graceful shutdown. `Close()` executes in strict order: (1) cancel context, (2) `sync.WaitGroup.Wait()` for all goroutines to exit, (3) `PRAGMA wal_checkpoint(TRUNCATE)`, (4) `db.Close()`. This ordering prevents checkpointing while a pruning goroutine is mid-write, and prevents goroutine leaks in tests.
 
 #### Schema
 
@@ -1922,8 +1933,8 @@ CREATE TABLE IF NOT EXISTS precedents (
 
     -- Command details
     raw_command     TEXT,
-    command_names   TEXT    NOT NULL,
-    flags           TEXT    NOT NULL,
+    command_names   TEXT    NOT NULL,  -- JSON array: ["curl","jq"]
+    flags           TEXT    NOT NULL,  -- JSON array: ["-s","-H"]
     ast_summary     TEXT,
     cwd             TEXT,
 
@@ -1988,7 +1999,23 @@ similarity = |A ∩ B| / |A ∪ B|
 
 At the default `min_similarity` of 0.7, a 3-stage pipeline must share at least 2 stages with a cached entry to qualify as a precedent.
 
-**Candidate set bounding:** Similarity search first queries SQLite for entries with overlapping `command_names` (SQL-level filter), then computes Jaccard in Go. To prevent O(n) scans on common commands (e.g., `curl` may have thousands of entries), the SQL query applies `LIMIT 200 ORDER BY created_at DESC`. This bounds memory and CPU while preferring recent precedents.
+**Candidate set bounding:** Similarity search queries SQLite for entries with overlapping `command_names` (via `json_each(command_names)` for exact name matching), then computes Jaccard in Go. To prevent O(n) scans on common commands and ensure balanced representation, the SQL query splits by polarity:
+
+```sql
+-- Recent positive candidates (allow + user_approved)
+SELECT * FROM precedents
+WHERE EXISTS (SELECT 1 FROM json_each(command_names) WHERE value IN (?...))
+  AND decision IN ('allow', 'user_approved')
+ORDER BY created_at DESC LIMIT 100
+
+-- Recent negative candidates (deny)
+SELECT * FROM precedents
+WHERE EXISTS (SELECT 1 FROM json_each(command_names) WHERE value IN (?...))
+  AND decision = 'deny'
+ORDER BY created_at DESC LIMIT 100
+```
+
+The two result sets are combined (up to 200 candidates) before Jaccard computation. This guarantees the candidate pool has representation from both polarities even if one has been flooded with recent entries.
 
 #### User Approval Recording
 
