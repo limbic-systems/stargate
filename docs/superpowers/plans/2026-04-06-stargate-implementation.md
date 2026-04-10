@@ -1815,9 +1815,48 @@ git commit -m "feat(classifier): integrate LLM review with rate limiting, file r
 
 ## M5: Precedent Corpus
 
-Goal: SQLite-backed judgment store with structural signatures, similarity search, and precedent injection.
+Goal: SQLite-backed judgment store with structural signatures, similarity search, precedent injection, command cache, and feedback endpoint. Incorporates all findings from 3 rounds of expert panel review.
 
-### Task 5.1: SQLite schema and migrations
+> **Panel design decisions (pre-implementation):**
+> - `auto_decide` removed → replaced with ephemeral command cache (SHA-256 of raw command + CWD)
+> - Balanced injection by polarity (positive/negative), not per-decision category
+> - Candidate query split by polarity (100 positive + 100 negative) at SQL level
+> - `command_names` stored as JSON array, queried via `json_each()`
+> - HMAC comparison via `hmac.Equal()` (constant-time)
+> - Cache key uses raw (pre-scrub) command to prevent scrubbing collisions
+> - Cache stores decision+action only (not reasoning)
+> - Cache max_entries=10000 with LRU eviction
+> - DB file 0600/0700 permissions with startup warning
+> - Close() ordering: cancel ctx → WaitGroup.Wait() → checkpoint → close
+> - Rate limit maps use TTLMap for automatic cleanup
+> - `Open()` accepts `context.Context` for goroutine lifecycle
+
+### Task 5.1: TTL Map utility
+
+> Moved before corpus — TTLMap is a dependency for rate limiting, command cache, and feedback trace map.
+
+**Files:**
+- Create: `internal/ttlmap/ttlmap.go`
+- Create: `internal/ttlmap/ttlmap_test.go`
+
+- [ ] **Step 1: Write failing tests**
+
+Test: set/get round-trip, key expires after TTL, background sweep removes expired entries, concurrent access (set/get/delete from multiple goroutines) is safe, `MaxEntries` with LRU eviction, `Clear()` removes all entries, `Close()` stops sweep goroutine.
+
+- [ ] **Step 2: Implement TTL map**
+
+`TTLMap[K comparable, V any]` backed by `sync.RWMutex`. Constructor: `New[K, V](ctx context.Context, opts Options) *TTLMap[K, V]` where `Options` has `SweepInterval` (default: `max(defaultTTL/10, 30s)`) and `MaxEntries` (0 = unlimited). Methods: `Set(key, value, ttl)`, `Get(key) (V, bool)`, `Delete(key)`, `Clear()`, `Len() int`, `Close()`. Background sweep selects on `ctx.Done()`. LRU eviction when `MaxEntries` exceeded (evict oldest by insertion time).
+
+Used for: command cache, per-signature rate limit, global rate limit, feedback trace map.
+
+- [ ] **Step 3: Run tests, commit**
+
+```bash
+go test ./internal/ttlmap/ -v -race
+git commit -m "feat(ttlmap): generic TTL map with LRU eviction, background sweep, context lifecycle"
+```
+
+### Task 5.2: SQLite schema and migrations
 
 **Files:**
 - Create: `internal/corpus/corpus.go`
@@ -1825,20 +1864,28 @@ Goal: SQLite-backed judgment store with structural signatures, similarity search
 
 - [ ] **Step 1: Write failing tests**
 
-Test: open creates DB and tables, schema matches spec, WAL mode is enabled, busy_timeout is set.
+Test: open creates DB and tables, schema matches spec (17 columns, 6 indexes, partial UNIQUE index), WAL mode enabled, busy_timeout set, file permissions 0600 on creation, startup warning if permissions looser than 0600.
 
 - [ ] **Step 2: Implement corpus open/close/migrate**
 
-`Open(path string) (*Corpus, error)` — open SQLite via `modernc.org/sqlite`, enable WAL mode, set busy_timeout, create tables and indexes per spec §7.5 schema. `Close()` — WAL checkpoint, close DB. Background pruning goroutine based on `max_age` and `max_entries`.
+`Open(ctx context.Context, path string, cfg config.CorpusConfig) (*Corpus, error)`:
+- Create parent directory with 0700 if needed
+- Open SQLite via `modernc.org/sqlite`, `MaxOpenConns(1)`
+- Enable WAL mode, set `busy_timeout=5000`
+- Create tables and indexes per spec §7.5 schema
+- `command_names` and `flags` stored as JSON arrays
+- Check file permissions, log WARN if not 0600
+- Start background pruning goroutine (selects on `ctx.Done()`)
+
+`Close()`: cancel ctx → `sync.WaitGroup.Wait()` → `PRAGMA wal_checkpoint(TRUNCATE)` → `db.Close()`.
 
 - [ ] **Step 3: Run tests, commit**
 
 ```bash
-git add internal/corpus/
-git commit -m "feat(corpus): add SQLite schema, migrations, WAL mode, and pruning"
+git commit -m "feat(corpus): SQLite schema, WAL mode, 0600 permissions, context lifecycle"
 ```
 
-### Task 5.2: Structural signatures
+### Task 5.3: Structural signatures
 
 **Files:**
 - Create: `internal/corpus/signature.go`
@@ -1846,20 +1893,25 @@ git commit -m "feat(corpus): add SQLite schema, migrations, WAL mode, and prunin
 
 - [ ] **Step 1: Write failing tests**
 
-Test: same command → same signature. Different args, same structure → same signature. Different flags → different signature. Pipeline order preserved.
+Test: same command → same signature. Different args, same structure → same signature. Different flags → different signature. Pipeline order preserved. Empty command list → empty signature. Flag sorting is deterministic. Context fields included.
 
 - [ ] **Step 2: Implement signature computation**
 
-`ComputeSignature(cmds []rules.CommandInfo) (signature string, hash string)` — extract `(name, subcommand, sorted_flags, context)` tuples, sort by pipeline position, serialize as canonical JSON, SHA-256 hash.
+`ComputeSignature(cmds []types.CommandInfo) (signature string, hash string)`:
+1. Extract `(name, subcommand, sorted_flags, context)` tuples
+2. Sort tuples by pipeline position
+3. Serialize as canonical JSON array
+4. SHA-256 hash for indexing
+
+Also: `CommandNames(cmds []types.CommandInfo) []string` — extract deduplicated sorted command names for the `command_names` JSON array column.
 
 - [ ] **Step 3: Run tests, commit**
 
 ```bash
-git add internal/corpus/
-git commit -m "feat(corpus): add structural signature computation"
+git commit -m "feat(corpus): structural signature computation with SHA-256 hashing"
 ```
 
-### Task 5.3: Write and lookup operations
+### Task 5.4: Write and lookup operations
 
 **Files:**
 - Create: `internal/corpus/write.go`
@@ -1868,20 +1920,35 @@ git commit -m "feat(corpus): add structural signature computation"
 
 - [ ] **Step 1: Write failing tests**
 
-Test: write a judgment, look it up by exact hash. Write multiple, search by similarity. Jaccard scoring. Rate limiting (one write per signature per hour). Idempotent user approval writes.
+Test: write a judgment and look it up by exact hash. Write multiple entries, search by similarity (Jaccard). Rate limiting: per-signature 1/hour rejects duplicate. Global rate limit: max_writes_per_minute rejects burst. Idempotent user_approved writes (UNIQUE constraint). Polarity-split candidate query returns balanced results. Candidate cap (LIMIT 100 per polarity). `json_each()` for command_names matching.
 
 - [ ] **Step 2: Implement write and lookup**
 
-`Write(entry PrecedentEntry) error` — insert with rate limiting check. `LookupExact(signatureHash string) (*PrecedentEntry, error)`. `LookupSimilar(signature string, minSimilarity float64, maxPrecedents int, maxPerDecision int) ([]PrecedentEntry, error)` — load candidates by command_names overlap, compute Jaccard, filter, balance allow/deny.
+`Write(entry PrecedentEntry) error`:
+- Check per-signature rate limit (TTLMap[signatureHash, time.Time], 1h TTL)
+- Check global rate limit (TTLMap or sliding window, max_writes_per_minute)
+- INSERT with scrubbed raw_command, reasoning truncated to max_reasoning_length
+
+`LookupSimilar(cmdNames []string, signature string, cfg LookupConfig) ([]PrecedentEntry, error)`:
+- Two SQL queries split by polarity:
+  ```sql
+  SELECT * FROM precedents
+  WHERE EXISTS (SELECT 1 FROM json_each(command_names) WHERE value IN (?...))
+    AND decision IN ('allow', 'user_approved')
+    AND created_at > ?  -- max_age filter
+  ORDER BY created_at DESC LIMIT 100
+  ```
+  (and equivalent for `decision = 'deny'`)
+- Combine candidates (up to 200), compute Jaccard in Go
+- Filter by min_similarity, cap by max_precedents and max_precedents_per_polarity
 
 - [ ] **Step 3: Run tests, commit**
 
 ```bash
-git add internal/corpus/
-git commit -m "feat(corpus): add write and lookup with similarity scoring"
+git commit -m "feat(corpus): write with rate limiting, polarity-split similarity lookup"
 ```
 
-### Task 5.4: Precedent formatting for prompts
+### Task 5.5: Precedent formatting for prompts
 
 **Files:**
 - Create: `internal/corpus/format.go`
@@ -1889,94 +1956,132 @@ git commit -m "feat(corpus): add write and lookup with similarity scoring"
 
 - [ ] **Step 1: Write tests and implement**
 
-`FormatPrecedents(entries []PrecedentEntry) string` — format precedents as the `{{precedents}}` prompt block per spec §7.5. Include age, similarity, decision, reasoning, CWD. Omit block entirely when empty.
+`FormatPrecedents(entries []PrecedentEntry) string`:
+- Format as the `{{precedents}}` prompt block per spec §7.5
+- Include: age (relative), similarity score, decision, reasoning, CWD
+- `user_approved` entries labeled: "approved by human operator, not by LLM judgment"
+- Omit block entirely when empty (no entries)
 
 - [ ] **Step 2: Run tests, commit**
 
 ```bash
-git add internal/corpus/
-git commit -m "feat(corpus): add precedent formatting for LLM prompts"
+git commit -m "feat(corpus): precedent formatting for LLM prompts with polarity labels"
 ```
 
-### Task 5.4.5: TTL Map utility
+### Task 5.6: Command cache
 
 **Files:**
-- Create: `internal/ttlmap/ttlmap.go`
-- Create: `internal/ttlmap/ttlmap_test.go`
+- Create: `internal/classifier/cache.go`
+- Modify: `internal/classifier/classifier_test.go`
+
+> **Panel requirement:** Ephemeral in-memory cache replacing auto_decide. Key on raw command, not scrubbed.
 
 - [ ] **Step 1: Write failing tests**
 
-Test: set a key and get it back, key expires after TTL and returns not-found, background sweep removes expired entries, concurrent access (set/get/delete from multiple goroutines) is safe.
+Test: cache miss returns false. After classification, same command is a cache hit. Different command is a miss. Different CWD is a miss. Two commands differing only by a scrubbed token are different cache keys (scrubbing collision prevention). Cache entry expires after TTL. `Clear()` empties cache. `MaxEntries` eviction works.
 
-- [ ] **Step 2: Implement TTL map**
+- [ ] **Step 2: Implement command cache**
 
-Create `internal/ttlmap/ttlmap.go`: a generic TTL map (`TTLMap[K comparable, V any]`) backed by `sync.RWMutex`. `Set(key K, value V, ttl time.Duration)`, `Get(key K) (V, bool)`, `Delete(key K)`. Background sweep goroutine at a configurable interval removes expired entries. `Close()` stops the sweep. This is used by the feedback handler for `tool_use_id → traceInfo` mapping.
+`CommandCache` wraps `TTLMap[string, CachedDecision]`:
+- Key: `SHA-256(raw_command + "\x00" + cwd)`
+- Value: `CachedDecision{Decision string, Action string}`
+- Config: `command_cache_enabled`, `command_cache_ttl`, `command_cache_max_entries`
+- `Lookup(rawCommand, cwd string) (CachedDecision, bool)`
+- `Store(rawCommand, cwd, decision, action string)`
+- `Clear()` — called on config reload (SIGHUP)
 
-- [ ] **Step 3: Run tests**
+- [ ] **Step 3: Run tests, commit**
 
 ```bash
-go test ./internal/ttlmap/ -v -race
+git commit -m "feat(classifier): ephemeral command cache with raw-command key"
 ```
-Expected: PASS
 
-- [ ] **Step 4: Commit**
+### Task 5.7: HMAC feedback tokens
+
+**Files:**
+- Create: `internal/feedback/hmac.go`
+- Create: `internal/feedback/hmac_test.go`
+
+- [ ] **Step 1: Write failing tests**
+
+Test: generate token, verify with same inputs → valid. Different trace_id → invalid. Different tool_use_id → invalid. Different decision → invalid. Verify uses `hmac.Equal()` (test timing-safe comparison). Server secret is 256-bit random.
+
+- [ ] **Step 2: Implement HMAC token generation and verification**
+
+`GenerateToken(secret []byte, traceID, toolUseID, decision string) string`
+`VerifyToken(secret []byte, token, traceID, toolUseID, decision string) bool`
+- Input: `traceID + "\x00" + toolUseID + "\x00" + decision`
+- Comparison via `hmac.Equal()` (constant-time)
+- Secret generated at server startup: `crypto/rand.Read(32)`
+
+- [ ] **Step 3: Run tests, commit**
 
 ```bash
-git add internal/ttlmap/
-git commit -m "feat(ttlmap): add generic TTL map with background sweep and concurrent safety"
+git commit -m "feat(feedback): HMAC-SHA256 token generation with constant-time verification"
 ```
 
-### Task 5.5: Wire corpus into classifier and add /feedback endpoint
+### Task 5.8: Wire corpus + cache + feedback into classifier and server
 
 **Files:**
 - Modify: `internal/classifier/classifier.go`
-- Create: `internal/feedback/feedback.go`
-- Create: `internal/feedback/feedback_test.go`
+- Modify: `internal/classifier/classifier_test.go`
+- Create: `internal/feedback/handler.go`
+- Create: `internal/feedback/handler_test.go`
 - Modify: `internal/server/server.go`
+- Modify: `internal/config/config.go`
 
-- [ ] **Step 1: Write tests for feedback endpoint**
+- [ ] **Step 1: Config changes**
 
-Test: valid feedback with correct HMAC token → recorded. Invalid HMAC → rejected. Expired trace → `trace_expired`. Duplicate feedback → idempotent (single corpus entry). Test that trace info expires after TTL and `/feedback` returns `trace_expired`.
+Add to `CorpusConfig`: `CommandCacheEnabled bool`, `CommandCacheTTL string`, `CommandCacheMaxEntries int`. Remove `ExactHitMode`. Rename `MaxPrecedentsPerDecision` → `MaxPrecedentsPerPolarity`. Defaults and validation.
 
-- [ ] **Step 2: Integrate corpus into classifier**
+- [ ] **Step 2: Write tests for feedback endpoint**
 
-After YELLOW+LLM rule match: compute signature → lookup precedents → inject into prompt → after LLM verdict, write judgment to corpus (with scrubbed command).
+Test: valid HMAC → recorded. Invalid HMAC → 403. Expired trace → 200 `trace_expired` (logged at WARN). Duplicate → idempotent. Missing fields → 400.
 
-- [ ] **Step 3: Implement feedback handler**
+- [ ] **Step 3: Integrate into classifier pipeline**
 
-`POST /feedback` — validate HMAC token, look up trace, record `user_approved` in corpus. In-memory `tool_use_id → traceInfo` map with 5-minute TTL and 30-second sweep.
+Updated flow for YELLOW + llm_review=true:
+1. Check command cache: `SHA-256(raw_command + cwd)` → HIT returns cached decision+action
+2. MISS → compute signature → polarity-split corpus lookup → format precedents
+3. Build prompt with precedents → LLM call (with file retrieval if needed)
+4. Write judgment to corpus (scrubbed, rate-limited)
+5. Write to command cache (raw key → decision+action)
+6. Generate feedback_token if YELLOW decision
+7. Return response
 
-- [ ] **Step 4: Run tests, commit**
+- [ ] **Step 4: Implement feedback handler**
+
+`POST /feedback`:
+- Validate required fields
+- Look up trace in TTLMap (5-min TTL, 30s sweep)
+- If expired: log WARN with trace_id, return `{"status": "trace_expired"}`
+- Verify HMAC via `hmac.Equal()`
+- If valid + outcome="executed" + decision=yellow: write `user_approved` to corpus
+- Return `{"status": "recorded"}`
+
+- [ ] **Step 5: Run tests, commit**
 
 ```bash
-git add internal/feedback/ internal/classifier/ internal/server/
-git commit -m "feat(corpus): wire precedent corpus into classifier and add /feedback endpoint"
+git commit -m "feat: wire corpus, command cache, and feedback into classifier pipeline"
 ```
 
-### Task 5.6: `stargate corpus` CLI subcommands
+### Task 5.9: `stargate corpus` CLI subcommands
 
 **Files:**
 - Modify: `cmd/stargate/main.go`
 
 - [ ] **Step 1: Implement corpus CLI**
 
-Wire `stargate corpus stats`, `search`, `inspect`, `invalidate`, `clear`, `export`, `import`. Each emits audit log at WARN level.
+Wire `stargate corpus stats`, `search`, `inspect`, `invalidate`, `clear`, `export`, `import`. Admin operations (`invalidate`, `clear`) emit audit log at WARN level.
 
-- [ ] **Step 2: Write tests for corpus CLI**
+- [ ] **Step 2: Write tests**
 
-Create table-driven tests covering: `stats` returns expected fields, `search` with a known signature returns results, `inspect` by ID returns details, `invalidate` marks entry invalid, `clear --confirm` removes all entries, `clear` without `--confirm` exits with error, `export` produces valid JSON, `import` loads exported data. Test audit logging for admin operations (`invalidate`, `clear`).
+Table-driven tests: `stats` returns expected fields, `search` with known signature returns results, `inspect` by ID, `invalidate` marks entry, `clear --confirm` removes all, `clear` without `--confirm` errors, `export` produces valid JSON, `import` loads data.
 
-- [ ] **Step 3: Run tests**
-
-```bash
-go test ./cmd/stargate/ -v -run TestCorpusCLI
-```
-
-- [ ] **Step 4: Commit**
+- [ ] **Step 3: Run tests, commit**
 
 ```bash
-git add cmd/
-git commit -m "feat(corpus): add corpus CLI subcommands (stats, search, invalidate, etc.)"
+git commit -m "feat(corpus): CLI subcommands (stats, search, inspect, invalidate, export, import)"
 ```
 
 ---
