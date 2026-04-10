@@ -899,10 +899,11 @@ max_precedents = 5
 # 1.0 = exact structural match only. 0.5 = half the signature must overlap.
 min_similarity = 0.7
 
-# Maximum number of precedents with the same decision to show.
+# Maximum number of precedents with the same polarity to show.
+# Polarity groups: positive (allow + user_approved) and negative (deny).
 # Prevents one-sided precedent injection. With max_precedents = 5 and
-# max_precedents_per_decision = 3, the LLM sees at most 3 allow + 2 deny.
-max_precedents_per_decision = 3
+# max_precedents_per_polarity = 3, the LLM sees at most 3 positive + 2 negative.
+max_precedents_per_polarity = 3
 
 # ---------------------------------------------------------------------------
 # Command Cache — in-memory exact-command deduplication
