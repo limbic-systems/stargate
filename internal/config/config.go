@@ -156,7 +156,6 @@ type ResolveConfig struct {
 type LLMConfig struct {
 	Provider                   string   `toml:"provider"`
 	Model                      string   `toml:"model"`
-	APIKey                     string   `toml:"api_key"`
 	MaxTokens                  int      `toml:"max_tokens"`
 	Temperature                float64  `toml:"temperature"`
 	AllowFileRetrieval         bool     `toml:"allow_file_retrieval"`

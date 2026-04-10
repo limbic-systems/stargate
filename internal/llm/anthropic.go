@@ -25,14 +25,15 @@ type AnthropicProvider struct {
 	hasClient bool
 }
 
-// NewAnthropicProvider creates a provider with the given API key.
-// If apiKey is empty, the provider uses the ANTHROPIC_API_KEY env var.
-// If neither is available, Review returns an error.
-func NewAnthropicProvider(apiKey string) *AnthropicProvider {
-	key := apiKey
-	if key == "" {
-		key = os.Getenv("ANTHROPIC_API_KEY")
-	}
+// NewAnthropicProvider creates a provider using environment variables for auth.
+// Resolution order:
+//  1. ANTHROPIC_API_KEY env → direct SDK path (fast, no subprocess)
+//  2. CLAUDE_CODE_OAUTH_TOKEN env + claude binary on PATH → subprocess path
+//  3. Neither → Review returns an error; caller disables LLM review
+//
+// No API key is accepted via config — secrets stay in env vars, not on disk.
+func NewAnthropicProvider() *AnthropicProvider {
+	key := os.Getenv("ANTHROPIC_API_KEY")
 
 	p := &AnthropicProvider{apiKey: key}
 	if key != "" {

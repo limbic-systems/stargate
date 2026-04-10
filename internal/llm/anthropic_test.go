@@ -109,21 +109,20 @@ func TestParseResponse_NestedJSONInReasoning(t *testing.T) {
 }
 
 func TestNewAnthropicProvider_NoAuth(t *testing.T) {
-	// With no API key and no env vars, HasAuth should return false.
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "")
 
-	p := NewAnthropicProvider("")
+	p := NewAnthropicProvider()
 	if p.HasAuth() {
 		t.Error("HasAuth should be false with no credentials")
 	}
 }
 
-func TestNewAnthropicProvider_WithAPIKey(t *testing.T) {
-	t.Setenv("ANTHROPIC_API_KEY", "")
-	p := NewAnthropicProvider("sk-ant-test")
+func TestNewAnthropicProvider_WithEnvAPIKey(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+	p := NewAnthropicProvider()
 	if !p.HasAuth() {
-		t.Error("HasAuth should be true with API key")
+		t.Error("HasAuth should be true with ANTHROPIC_API_KEY env")
 	}
 	if !p.hasClient {
 		t.Error("client should be initialized with API key")
@@ -133,7 +132,7 @@ func TestNewAnthropicProvider_WithAPIKey(t *testing.T) {
 func TestNewAnthropicProvider_ReviewWithoutAuth(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "")
-	p := NewAnthropicProvider("")
+	p := NewAnthropicProvider()
 	_, err := p.Review(t.Context(), ReviewRequest{})
 	if err == nil {
 		t.Fatal("expected error when no auth available")

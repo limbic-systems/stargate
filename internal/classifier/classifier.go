@@ -138,7 +138,7 @@ func New(cfg *config.Config) (*Classifier, error) {
 	var provider llm.ReviewerProvider
 	switch strings.ToLower(strings.TrimSpace(cfg.LLM.Provider)) {
 	case "", "anthropic":
-		ap := llm.NewAnthropicProvider(cfg.LLM.APIKey)
+		ap := llm.NewAnthropicProvider()
 		if ap.HasAuth() {
 			provider = ap
 		}
