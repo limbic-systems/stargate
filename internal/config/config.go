@@ -164,7 +164,7 @@ type LLMConfig struct {
 	MaxFileSize                int      `toml:"max_file_size"`
 	MaxFilesPerRequest         int      `toml:"max_files_per_request"`
 	MaxTotalFileBytes          int      `toml:"max_total_file_bytes"`
-	MaxCallsPerMinute          int      `toml:"max_calls_per_minute"`
+	MaxCallsPerMinute          *int     `toml:"max_calls_per_minute"`
 	AllowedPaths               []string `toml:"allowed_paths"`
 	DeniedPaths                []string `toml:"denied_paths"`
 	SystemPrompt               string   `toml:"system_prompt"`
@@ -282,8 +282,10 @@ func applyDefaults(cfg *Config) {
 	if cfg.LLM.MaxTotalFileBytes == 0 {
 		cfg.LLM.MaxTotalFileBytes = 131072 // 128KB
 	}
-	// MaxCallsPerMinute defaults to 0 (unlimited). Operators set a positive
-	// value to enable rate limiting. The rate limiter treats <= 0 as disabled.
+	if cfg.LLM.MaxCallsPerMinute == nil {
+		defaultRate := 30
+		cfg.LLM.MaxCallsPerMinute = &defaultRate
+	}
 	if cfg.Corpus.Path == "" {
 		cfg.Corpus.Path = "~/.local/share/stargate/precedents.db"
 	}
@@ -445,8 +447,8 @@ func (cfg *Config) Validate() error {
 	if cfg.LLM.MaxTotalFileBytes < 0 {
 		return fmt.Errorf("config: llm.max_total_file_bytes must be non-negative; got %d", cfg.LLM.MaxTotalFileBytes)
 	}
-	if cfg.LLM.MaxCallsPerMinute < 0 {
-		return fmt.Errorf("config: llm.max_calls_per_minute must be non-negative; got %d", cfg.LLM.MaxCallsPerMinute)
+	if cfg.LLM.MaxCallsPerMinute != nil && *cfg.LLM.MaxCallsPerMinute < 0 {
+		return fmt.Errorf("config: llm.max_calls_per_minute must be non-negative; got %d", *cfg.LLM.MaxCallsPerMinute)
 	}
 
 	// --- Corpus ---

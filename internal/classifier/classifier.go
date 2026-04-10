@@ -145,9 +145,9 @@ func New(cfg *config.Config) (*Classifier, error) {
 	}
 
 	// Wrap with rate limiter — delegates enable/disable semantics to the
-	// rate-limited provider itself (MaxCallsPerMinute <= 0 = disabled).
+	// rate-limited provider itself (<= 0 = disabled, i.e., max_calls_per_minute = 0 in config).
 	if provider != nil {
-		provider = llm.NewRateLimitedProvider(provider, cfg.LLM.MaxCallsPerMinute)
+		provider = llm.NewRateLimitedProvider(provider, *cfg.LLM.MaxCallsPerMinute)
 	}
 
 	return &Classifier{
