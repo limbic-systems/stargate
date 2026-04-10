@@ -27,7 +27,7 @@ func testCorpusConfig(path string) config.CorpusConfig {
 		StoreReasoning:          true,
 		StoreRawCommand:         true,
 		StoreUserApprovals:      true,
-		MaxPrecedentsPerDecision: 3,
+		MaxPrecedentsPerPolarity: 3,
 	}
 }
 
