@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 	"time"
@@ -147,7 +148,19 @@ func New(cfg *config.Config) (*Classifier, error) {
 	// Wrap with rate limiter — delegates enable/disable semantics to the
 	// rate-limited provider itself (<= 0 = disabled, i.e., max_calls_per_minute = 0 in config).
 	if provider != nil {
-		provider = llm.NewRateLimitedProvider(provider, *cfg.LLM.MaxCallsPerMinute)
+		maxCalls := 0 // default: disabled if pointer is nil (test/embedded configs)
+		if cfg.LLM.MaxCallsPerMinute != nil {
+			maxCalls = *cfg.LLM.MaxCallsPerMinute
+		}
+		provider = llm.NewRateLimitedProvider(provider, maxCalls)
+	}
+
+	// Fallback for configs not created via Load (tests, embedded).
+	serverCWD := cfg.ServerCWD
+	if serverCWD == "" {
+		if cwd, err := os.Getwd(); err == nil {
+			serverCWD = cwd
+		}
 	}
 
 	return &Classifier{
@@ -162,7 +175,7 @@ func New(cfg *config.Config) (*Classifier, error) {
 		scrubber:     scrubber,
 		llmCfg:       cfg.LLM,
 		scopes:       cfg.Scopes,
-		serverCWD:    cfg.ServerCWD,
+		serverCWD:    serverCWD,
 		maxReasonLen: cfg.LLM.MaxResponseReasoningLength,
 	}, nil
 }
