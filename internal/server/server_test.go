@@ -61,6 +61,7 @@ func mustNewServer(t *testing.T, cfg *config.Config) *server.Server {
 	if err != nil {
 		t.Fatalf("server.New: %v", err)
 	}
+	t.Cleanup(func() { srv.Close() })
 	return srv
 }
 

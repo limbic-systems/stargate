@@ -87,6 +87,7 @@ func (c *Corpus) GetByID(id int64) (PrecedentEntry, error) {
 	if err != nil {
 		return PrecedentEntry{}, fmt.Errorf("corpus: get by id scan: %w", err)
 	}
+	e.PrecedentEntry.ID = e.id
 	return e.PrecedentEntry, nil
 }
 
@@ -138,6 +139,7 @@ func (c *Corpus) ExportAll() ([]PrecedentEntry, error) {
 		if err != nil {
 			return nil, fmt.Errorf("corpus: export all scan: %w", err)
 		}
+		e.PrecedentEntry.ID = e.id
 		entries = append(entries, e.PrecedentEntry)
 	}
 	if err := rows.Err(); err != nil {

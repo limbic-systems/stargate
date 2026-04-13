@@ -59,11 +59,23 @@ func ageLabel(t time.Time) string {
 	age := time.Since(t)
 	switch {
 	case age < time.Hour:
-		return fmt.Sprintf("%d minutes ago", max(int(age.Minutes()), 1))
+		mins := max(int(age.Minutes()), 1)
+		if mins == 1 {
+			return "1 minute ago"
+		}
+		return fmt.Sprintf("%d minutes ago", mins)
 	case age < 24*time.Hour:
-		return fmt.Sprintf("%d hours ago", int(age.Hours()))
+		hours := int(age.Hours())
+		if hours == 1 {
+			return "1 hour ago"
+		}
+		return fmt.Sprintf("%d hours ago", hours)
 	default:
-		return fmt.Sprintf("%d days ago", int(age.Hours()/24))
+		days := int(age.Hours() / 24)
+		if days == 1 {
+			return "1 day ago"
+		}
+		return fmt.Sprintf("%d days ago", days)
 	}
 }
 
