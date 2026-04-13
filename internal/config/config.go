@@ -52,24 +52,19 @@ func parseDuration(field, value string) error {
 }
 
 // parseDayDuration validates non-negative duration strings that may use "d" suffix for days.
-// Supports Go durations (e.g., "1h", "0s") and day-based durations (e.g., "90d", "7d").
-// Day-based values must be positive (>= 1d); use "0s" for zero.
+// Delegates to ParseMaxAge for the actual parsing — single source of truth.
 func parseDayDuration(field, value string) error {
 	if value == "" {
 		return nil
 	}
-	// Try standard Go duration first.
-	if d, err := time.ParseDuration(value); err == nil {
-		if d < 0 {
-			return fmt.Errorf("config: %s: duration must be non-negative; got %q", field, value)
-		}
-		return nil
+	d, err := ParseMaxAge(value)
+	if err != nil {
+		return fmt.Errorf("config: %s: %w", field, err)
 	}
-	// Try strict "Nd" format for days (e.g., "90d", "7d"). Always positive by regex.
-	if matched, _ := regexp.MatchString(`^[1-9]\d*d$`, value); matched {
-		return nil
+	if d < 0 {
+		return fmt.Errorf("config: %s: duration must be non-negative; got %q", field, value)
 	}
-	return fmt.Errorf("config: %s: invalid duration %q (use Go durations like \"1h\" or day-based like \"90d\")", field, value)
+	return nil
 }
 
 // validateRulePattern checks that a rule's regex pattern compiles.

@@ -328,7 +328,7 @@ func handleCorpusStats(args []string, configPath string, _ bool) int {
 	dbPath := cfg.Corpus.Path
 	if len(dbPath) > 1 && dbPath[:2] == "~/" {
 		if home, err := os.UserHomeDir(); err == nil {
-			dbPath = home + "/" + dbPath[2:]
+			dbPath = filepath.Join(home, dbPath[2:])
 		}
 	}
 	if info, err := os.Stat(dbPath); err == nil {

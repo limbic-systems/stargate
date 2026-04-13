@@ -343,13 +343,14 @@ func (c *Classifier) Classify(ctx context.Context, req ClassifyRequest) *Classif
 	resp.Reason = result.Reason
 	resp.Rule = result.Rule
 
-	// Precompute structural signature for corpus and feedback (used by LLM review and trace recording).
-	signature, sigHash := corpus.ComputeSignature(cmds)
-	cmdNames := corpus.CommandNames(cmds)
-	cmdFlags := collectFlags(cmds)
-
 	// 6. LLM review — only for YELLOW decisions with llm_review=true.
+	// Signature/cmdNames computed lazily since RED/GREEN skip this path.
+	var signature, sigHash string
+	var cmdNames, cmdFlags []string
 	if result.LLMReview && c.llmProvider != nil {
+		signature, sigHash = corpus.ComputeSignature(cmds)
+		cmdNames = corpus.CommandNames(cmds)
+		cmdFlags = collectFlags(cmds)
 		llmResult := c.reviewWithLLM(ctx, req, cmds, resp, signature, sigHash, cmdNames, cmdFlags)
 		resp.LLMReview = llmResult
 		resp.Timing.LLMMs = llmResult.DurationMs
