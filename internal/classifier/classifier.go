@@ -188,7 +188,15 @@ func New(cfg *config.Config) (*Classifier, error) {
 	// Initialize command cache.
 	var cacheTTL time.Duration
 	if cfg.Corpus.CommandCacheTTL != "" {
-		cacheTTL, _ = time.ParseDuration(cfg.Corpus.CommandCacheTTL)
+		var parseErr error
+		cacheTTL, parseErr = time.ParseDuration(cfg.Corpus.CommandCacheTTL)
+		if parseErr != nil {
+			cancel()
+			if c != nil {
+				c.Close()
+			}
+			return nil, fmt.Errorf("classifier: invalid command_cache_ttl %q: %w", cfg.Corpus.CommandCacheTTL, parseErr)
+		}
 	}
 	var cmdCache *CommandCache
 	if cfg.Corpus.CommandCacheEnabled {
@@ -513,7 +521,7 @@ func (c *Classifier) reviewWithLLM(ctx context.Context, req ClassifyRequest, cmd
 					Signature:     sig,
 					SignatureHash: sigHash,
 					CommandNames:  cmdNames,
-					Flags:         collectFlags(cmds),
+					Flags:         cmdFlags,
 					ASTSummary:    astSummary,
 					CWD:           req.CWD,
 					Decision:      result.Decision,

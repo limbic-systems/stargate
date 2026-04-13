@@ -356,7 +356,8 @@ func handleCorpusSearch(args []string, configPath string, _ bool) int {
 	defer c.Close()
 
 	// Parse and walk the command to get CommandInfo.
-	cmds, err := parser.ParseAndWalk(command, "bash", nil)
+	walkerCfg := parser.NewWalkerConfig(cfg.Wrappers, cfg.Commands)
+	cmds, err := parser.ParseAndWalk(command, cfg.Parser.Dialect, walkerCfg)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "corpus search: parse command: %v\n", err)
 		return 1

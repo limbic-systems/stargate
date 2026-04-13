@@ -16,13 +16,13 @@ func TestCommandCache(t *testing.T) {
 
 	t.Run("hit after store", func(t *testing.T) {
 		cc := NewCommandCache(t.Context(), 5*time.Minute, 100)
-		cc.Store("ls -la", "/home/user", "green", "allow")
+		cc.Store("ls -la", "/home/user", "allow", "allow")
 		got, ok := cc.Lookup("ls -la", "/home/user")
 		if !ok {
 			t.Fatal("expected hit, got miss")
 		}
-		if got.Decision != "green" {
-			t.Errorf("Decision: got %q, want %q", got.Decision, "green")
+		if got.Decision != "allow" {
+			t.Errorf("Decision: got %q, want %q", got.Decision, "allow")
 		}
 		if got.Action != "allow" {
 			t.Errorf("Action: got %q, want %q", got.Action, "allow")
@@ -31,7 +31,7 @@ func TestCommandCache(t *testing.T) {
 
 	t.Run("different command same CWD is a miss", func(t *testing.T) {
 		cc := NewCommandCache(t.Context(), 5*time.Minute, 100)
-		cc.Store("ls -la", "/home/user", "green", "allow")
+		cc.Store("ls -la", "/home/user", "allow", "allow")
 		_, ok := cc.Lookup("rm -rf /", "/home/user")
 		if ok {
 			t.Fatal("expected miss for different command, got hit")
@@ -40,7 +40,7 @@ func TestCommandCache(t *testing.T) {
 
 	t.Run("same command different CWD is a miss", func(t *testing.T) {
 		cc := NewCommandCache(t.Context(), 5*time.Minute, 100)
-		cc.Store("ls -la", "/home/user", "green", "allow")
+		cc.Store("ls -la", "/home/user", "allow", "allow")
 		_, ok := cc.Lookup("ls -la", "/tmp")
 		if ok {
 			t.Fatal("expected miss for different CWD, got hit")
@@ -53,7 +53,7 @@ func TestCommandCache(t *testing.T) {
 		cc := NewCommandCache(t.Context(), 5*time.Minute, 100)
 		cmd1 := "curl -H 'Authorization: Bearer token-abc123' https://api.example.com"
 		cmd2 := "curl -H 'Authorization: Bearer token-xyz789' https://api.example.com"
-		cc.Store(cmd1, "/home/user", "yellow", "review")
+		cc.Store(cmd1, "/home/user", "deny", "block")
 		// cmd2 would scrub to the same string as cmd1, but we use raw commands.
 		_, ok := cc.Lookup(cmd2, "/home/user")
 		if ok {
@@ -63,7 +63,7 @@ func TestCommandCache(t *testing.T) {
 
 	t.Run("entry expires after TTL", func(t *testing.T) {
 		cc := NewCommandCache(t.Context(), 50*time.Millisecond, 100)
-		cc.Store("ls -la", "/home/user", "green", "allow")
+		cc.Store("ls -la", "/home/user", "allow", "allow")
 		// Verify it's present.
 		_, ok := cc.Lookup("ls -la", "/home/user")
 		if !ok {
@@ -79,8 +79,8 @@ func TestCommandCache(t *testing.T) {
 
 	t.Run("clear empties cache", func(t *testing.T) {
 		cc := NewCommandCache(t.Context(), 5*time.Minute, 100)
-		cc.Store("ls -la", "/home/user", "green", "allow")
-		cc.Store("pwd", "/home/user", "green", "allow")
+		cc.Store("ls -la", "/home/user", "allow", "allow")
+		cc.Store("pwd", "/home/user", "allow", "allow")
 		cc.Clear()
 		_, ok1 := cc.Lookup("ls -la", "/home/user")
 		_, ok2 := cc.Lookup("pwd", "/home/user")
@@ -91,7 +91,7 @@ func TestCommandCache(t *testing.T) {
 
 	t.Run("disabled cache ttl=0: store is no-op, lookup always false", func(t *testing.T) {
 		cc := NewCommandCache(t.Context(), 0, 100)
-		cc.Store("ls -la", "/home/user", "green", "allow")
+		cc.Store("ls -la", "/home/user", "allow", "allow")
 		_, ok := cc.Lookup("ls -la", "/home/user")
 		if ok {
 			t.Fatal("expected miss from disabled cache (ttl=0)")
@@ -102,7 +102,7 @@ func TestCommandCache(t *testing.T) {
 
 	t.Run("disabled cache maxEntries=0: store is no-op, lookup always false", func(t *testing.T) {
 		cc := NewCommandCache(t.Context(), 5*time.Minute, 0)
-		cc.Store("ls -la", "/home/user", "green", "allow")
+		cc.Store("ls -la", "/home/user", "allow", "allow")
 		_, ok := cc.Lookup("ls -la", "/home/user")
 		if ok {
 			t.Fatal("expected miss from disabled cache (maxEntries=0)")
@@ -112,11 +112,11 @@ func TestCommandCache(t *testing.T) {
 	t.Run("maxEntries eviction evicts oldest", func(t *testing.T) {
 		cc := NewCommandCache(t.Context(), 5*time.Minute, 3)
 		// Store 3 entries to fill the cache.
-		cc.Store("cmd-a", "/", "green", "allow")
+		cc.Store("cmd-a", "/", "allow", "allow")
 		time.Sleep(2 * time.Millisecond) // ensure distinct insertedAt
-		cc.Store("cmd-b", "/", "green", "allow")
+		cc.Store("cmd-b", "/", "allow", "allow")
 		time.Sleep(2 * time.Millisecond)
-		cc.Store("cmd-c", "/", "green", "allow")
+		cc.Store("cmd-c", "/", "allow", "allow")
 		// All three should be present.
 		for _, cmd := range []string{"cmd-a", "cmd-b", "cmd-c"} {
 			if _, ok := cc.Lookup(cmd, "/"); !ok {
@@ -125,7 +125,7 @@ func TestCommandCache(t *testing.T) {
 		}
 		// Adding a 4th entry should evict cmd-a (oldest).
 		time.Sleep(2 * time.Millisecond)
-		cc.Store("cmd-d", "/", "green", "allow")
+		cc.Store("cmd-d", "/", "allow", "allow")
 		if _, ok := cc.Lookup("cmd-a", "/"); ok {
 			t.Fatal("expected cmd-a to be evicted as the oldest entry")
 		}

@@ -26,20 +26,14 @@ type signatureTuple struct {
 // canonical JSON, and returns the signature string and its SHA-256 hash.
 //
 // The signature is argument-agnostic: only Name, Subcommand, sorted Flags, and
-// the context label are included. Tuples are ordered by PipelinePosition so
-// that pipeline structure is preserved. Commands not in a pipeline are placed
-// before those in a pipeline (PipelinePosition == 0 sorts first).
+// the context label are included. Tuples are emitted in walker order (the
+// lexical AST order in which the walker visits commands), which correctly
+// preserves pipeline structure without sorting across pipeline boundaries.
+// For example, "a|b; c|d" visits commands in the order a,b,c,d and sorting by
+// PipelinePosition alone would corrupt that by interleaving the two pipelines.
 func ComputeSignature(cmds []types.CommandInfo) (signature string, hash string) {
-	// Sort a copy by pipeline position to preserve pipeline order while keeping
-	// the function side-effect-free on the caller's slice.
-	sorted := make([]types.CommandInfo, len(cmds))
-	copy(sorted, cmds)
-	slices.SortStableFunc(sorted, func(a, b types.CommandInfo) int {
-		return a.Context.PipelinePosition - b.Context.PipelinePosition
-	})
-
-	tuples := make([]signatureTuple, len(sorted))
-	for i, cmd := range sorted {
+	tuples := make([]signatureTuple, len(cmds))
+	for i, cmd := range cmds {
 		flags := make([]string, len(cmd.Flags))
 		copy(flags, cmd.Flags)
 		slices.Sort(flags)

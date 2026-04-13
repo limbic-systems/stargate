@@ -1,5 +1,5 @@
 // Package ttlmap provides a generic TTL-based map with background sweep and
-// LRU eviction by insertion time.
+// FIFO eviction by insertion time.
 package ttlmap
 
 import (
@@ -108,13 +108,28 @@ func (m *TTLMap[K, V]) evictOldest() {
 }
 
 // Get returns the value for key and true if the entry exists and has not
-// expired. Returns the zero value and false otherwise.
+// expired. Returns the zero value and false otherwise. Expired entries are
+// lazily deleted: when an expired entry is found under RLock, the lock is
+// upgraded to a write lock to remove it (with a re-check to avoid races with
+// the background sweep).
 func (m *TTLMap[K, V]) Get(key K) (V, bool) {
 	m.mu.RLock()
 	e, ok := m.items[key]
 	m.mu.RUnlock()
 
-	if !ok || time.Now().After(e.expiresAt) {
+	if !ok {
+		var zero V
+		return zero, false
+	}
+
+	if time.Now().After(e.expiresAt) {
+		// Lazy expiry: upgrade to write lock and delete, re-checking expiry in
+		// case the background sweep already removed it between the RUnlock and Lock.
+		m.mu.Lock()
+		if e2, still := m.items[key]; still && time.Now().After(e2.expiresAt) {
+			delete(m.items, key)
+		}
+		m.mu.Unlock()
 		var zero V
 		return zero, false
 	}
