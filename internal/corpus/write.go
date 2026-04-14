@@ -95,7 +95,12 @@ func (c *Corpus) Write(entry PrecedentEntry) error {
 		return ErrRateLimited
 	}
 
-	// Both checks passed — commit both entries atomically.
+	// Both checks passed — commit rate-limit entries before the DB insert.
+	// This is intentionally fail-closed: if the insert fails (disk full, DB error),
+	// the rate-limit slot is still consumed. This prevents retry flooding — a
+	// failing insert that retries in a tight loop would otherwise bypass the
+	// rate limit entirely. The cost (one wasted slot per transient failure) is
+	// acceptable given the 1-hour/1-minute TTLs.
 	if c.cfg.MaxWritesPerMinute > 0 {
 		c.globalRateLimit.Set(globalBucket, globalCount+1, 61*time.Second)
 	}
