@@ -95,11 +95,8 @@ func TestFormatPrecedents_DenyDecision(t *testing.T) {
 	if !strings.Contains(result, "DENY") {
 		t.Error("missing DENY label")
 	}
-	if !strings.Contains(result, "1 minutes ago") || !strings.Contains(result, "30 minutes ago") {
-		// Accept either — depends on timing
-		if !strings.Contains(result, "minutes ago") {
-			t.Error("missing minutes ago label")
-		}
+	if !strings.Contains(result, "minutes ago") {
+		t.Error("missing minutes ago label")
 	}
 }
 
