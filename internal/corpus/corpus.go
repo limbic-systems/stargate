@@ -179,7 +179,11 @@ func checkPermissions(path string) {
 	}
 	perm := info.Mode().Perm()
 	if perm&0077 != 0 {
-		fmt.Fprintf(os.Stderr, "corpus: WARNING: %s has permissions %o (expected 0600). Other users may be able to read classification data.\n", path, perm)
+		expected := "0600"
+		if info.IsDir() {
+			expected = "0700"
+		}
+		fmt.Fprintf(os.Stderr, "corpus: WARNING: %s has permissions %o (expected %s). Other users may be able to access classification data.\n", path, perm, expected)
 	}
 }
 

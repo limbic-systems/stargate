@@ -98,14 +98,14 @@ func TestMaxEntriesEviction(t *testing.T) {
 		MaxEntries:    3,
 	})
 
-	// Insert 5 entries with a small delay so insertedAt ordering is deterministic.
+	// Insert 5 entries with a small delay so writtenAt ordering is deterministic.
 	keys := []string{"k1", "k2", "k3", "k4", "k5"}
 	for _, k := range keys {
 		m.Set(k, 1, time.Minute)
-		time.Sleep(2 * time.Millisecond) // ensure strictly ordered insertedAt
+		time.Sleep(2 * time.Millisecond) // ensure strictly ordered writtenAt
 	}
 
-	// k1 and k2 should have been evicted (oldest insertedAt).
+	// k1 and k2 should have been evicted (oldest writtenAt).
 	if _, ok := m.Get("k1"); ok {
 		t.Error("k1 should have been evicted")
 	}
