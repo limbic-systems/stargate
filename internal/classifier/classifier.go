@@ -253,6 +253,34 @@ func NewWithProvider(cfg *config.Config, provider llm.ReviewerProvider) (*Classi
 	return c, nil
 }
 
+// classifyState holds all request-scoped data for a single Classify() call.
+// Derived values (signatures, scrubbed command) are computed lazily on first access.
+type classifyState struct {
+	ctx     context.Context
+	req     ClassifyRequest
+	cmds    []rules.CommandInfo
+	resp    *ClassifyResponse
+	traceID string
+
+	// Lazily computed structural fields.
+	sigComputed   bool
+	signature     string
+	signatureHash string
+	cmdNames      []string
+	cmdFlags      []string
+}
+
+// ensureSignature computes the structural signature if not already done.
+func (s *classifyState) ensureSignature() {
+	if s.sigComputed {
+		return
+	}
+	s.signature, s.signatureHash = corpus.ComputeSignature(s.cmds)
+	s.cmdNames = corpus.CommandNames(s.cmds)
+	s.cmdFlags = collectFlags(s.cmds)
+	s.sigComputed = true
+}
+
 // Classify runs the classification pipeline and returns a response.
 // It never returns nil.
 func (c *Classifier) Classify(ctx context.Context, req ClassifyRequest) *ClassifyResponse {
@@ -307,6 +335,15 @@ func (c *Classifier) Classify(ctx context.Context, req ClassifyRequest) *Classif
 		return finalize()
 	}
 
+	// Build classify state — lazy signature computation defers work until needed.
+	state := &classifyState{
+		ctx:     ctx,
+		req:     req,
+		cmds:    cmds,
+		resp:    resp,
+		traceID: traceID,
+	}
+
 	// 4. Rule engine evaluation.
 	// Unresolvable commands (Name == "") never match command/commands rules,
 	// so they fail GREEN and fall to YELLOW/default. RED rules still fire for
@@ -345,13 +382,9 @@ func (c *Classifier) Classify(ctx context.Context, req ClassifyRequest) *Classif
 
 	// 6. LLM review — only for YELLOW decisions with llm_review=true.
 	// Signature/cmdNames computed lazily since RED/GREEN skip this path.
-	var signature, sigHash string
-	var cmdNames, cmdFlags []string
 	if result.LLMReview && c.llmProvider != nil {
-		signature, sigHash = corpus.ComputeSignature(cmds)
-		cmdNames = corpus.CommandNames(cmds)
-		cmdFlags = collectFlags(cmds)
-		llmResult := c.reviewWithLLM(ctx, req, cmds, resp, signature, sigHash, cmdNames, cmdFlags)
+		state.ensureSignature()
+		llmResult := c.reviewWithLLM(state)
 		resp.LLMReview = llmResult
 		resp.Timing.LLMMs = llmResult.DurationMs
 
@@ -387,11 +420,7 @@ func (c *Classifier) Classify(ctx context.Context, req ClassifyRequest) *Classif
 		}
 		// Compute structural fields if not already done (LLM path skipped when
 		// provider is nil, but feedback still needs them for user_approved entries).
-		if signature == "" {
-			signature, sigHash = corpus.ComputeSignature(cmds)
-			cmdNames = corpus.CommandNames(cmds)
-			cmdFlags = collectFlags(cmds)
-		}
+		state.ensureSignature()
 		if toolUseID != "" {
 			token := feedback.GenerateToken(c.hmacSecret, traceID, toolUseID, resp.Decision)
 			resp.FeedbackToken = &token
@@ -409,10 +438,10 @@ func (c *Classifier) Classify(ctx context.Context, req ClassifyRequest) *Classif
 					Decision:      resp.Decision,
 					ToolUseID:     toolUseID,
 					TraceID:       traceID,
-					Signature:     signature,
-					SignatureHash: sigHash,
-					CommandNames:  cmdNames,
-					Flags:         cmdFlags,
+					Signature:     state.signature,
+					SignatureHash: state.signatureHash,
+					CommandNames:  state.cmdNames,
+					Flags:         state.cmdFlags,
 					RawCommand:    c.scrubber.Command(req.Command),
 					CWD:           req.CWD,
 					SessionID:     sessionID,
@@ -426,7 +455,7 @@ func (c *Classifier) Classify(ctx context.Context, req ClassifyRequest) *Classif
 }
 
 // reviewWithLLM runs the LLM review pipeline: cache → corpus → scrub → prompt → call → (files → call) → corpus write → cache write.
-func (c *Classifier) reviewWithLLM(ctx context.Context, req ClassifyRequest, cmds []rules.CommandInfo, resp *ClassifyResponse, sig, sigHash string, cmdNames, cmdFlags []string) *LLMReviewResult {
+func (c *Classifier) reviewWithLLM(state *classifyState) *LLMReviewResult {
 	llmStart := time.Now()
 	result := &LLMReviewResult{
 		Performed:      true,
@@ -441,7 +470,7 @@ func (c *Classifier) reviewWithLLM(ctx context.Context, req ClassifyRequest, cmd
 	}()
 
 	// Command cache check — skip everything on HIT.
-	if cached, hit := c.cmdCache.Lookup(req.Command, req.CWD); hit {
+	if cached, hit := c.cmdCache.Lookup(state.req.Command, state.req.CWD); hit {
 		result.Performed = false
 		result.Rounds = 0
 		result.Decision = cached.Decision
@@ -451,6 +480,7 @@ func (c *Classifier) reviewWithLLM(ctx context.Context, req ClassifyRequest, cmd
 	}
 
 	// Corpus precedent lookup.
+	state.ensureSignature()
 	var precedentText string
 	var precedentsFound int
 	if c.corpus != nil {
@@ -464,7 +494,7 @@ func (c *Classifier) reviewWithLLM(ctx context.Context, req ClassifyRequest, cmd
 			MaxPerPolarity: c.corpusCfg.MaxPrecedentsPerPolarity,
 			MaxAge:         maxAge,
 		}
-		precedents, err := c.corpus.LookupSimilar(cmdNames, sig, lookupCfg)
+		precedents, err := c.corpus.LookupSimilar(state.cmdNames, state.signature, lookupCfg)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "classifier: corpus lookup: %v\n", err)
 		} else {
@@ -479,7 +509,7 @@ func (c *Classifier) reviewWithLLM(ctx context.Context, req ClassifyRequest, cmd
 					CWD:        p.CWD,
 					CreatedAt:  p.CreatedAt,
 					Similarity: p.Similarity,
-					ExactMatch: p.SignatureHash == sigHash,
+					ExactMatch: p.SignatureHash == state.signatureHash,
 				})
 			}
 			precedentText = corpus.FormatPrecedents(fmtPrecedents)
@@ -487,8 +517,8 @@ func (c *Classifier) reviewWithLLM(ctx context.Context, req ClassifyRequest, cmd
 	}
 
 	// Scrub command and build AST summary.
-	scrubbedCmd := c.scrubber.Command(req.Command)
-	astSummary := c.buildASTTextSummary(cmds)
+	scrubbedCmd := c.scrubber.Command(state.req.Command)
+	astSummary := c.buildASTTextSummary(state.cmds)
 
 	// Format scopes for prompt (sorted for deterministic ordering).
 	scopeNames := make([]string, 0, len(c.scopes))
@@ -504,8 +534,8 @@ func (c *Classifier) reviewWithLLM(ctx context.Context, req ClassifyRequest, cmd
 	vars := llm.PromptVars{
 		Command:    scrubbedCmd,
 		ASTSummary: astSummary,
-		CWD:        req.CWD,
-		RuleReason: resp.Reason,
+		CWD:        state.req.CWD,
+		RuleReason: state.resp.Reason,
 		Scopes:     strings.Join(scopeLines, "\n"),
 		Precedents: precedentText,
 	}
@@ -514,7 +544,7 @@ func (c *Classifier) reviewWithLLM(ctx context.Context, req ClassifyRequest, cmd
 
 	// Populate corpus summary in response.
 	corpusSummary := &CorpusSummary{PrecedentsFound: precedentsFound}
-	resp.Corpus = corpusSummary
+	state.resp.Corpus = corpusSummary
 
 	// postProcess writes to corpus and command cache after LLM decision.
 	postProcess := func() {
@@ -536,14 +566,14 @@ func (c *Classifier) reviewWithLLM(ctx context.Context, req ClassifyRequest, cmd
 			}
 			if shouldStore {
 				entry := corpus.PrecedentEntry{
-					Signature:     sig,
-					SignatureHash: sigHash,
-					CommandNames:  cmdNames,
-					Flags:         cmdFlags,
+					Signature:     state.signature,
+					SignatureHash: state.signatureHash,
+					CommandNames:  state.cmdNames,
+					Flags:         state.cmdFlags,
 					ASTSummary:    astSummary,
-					CWD:           req.CWD,
+					CWD:           state.req.CWD,
 					Decision:      result.Decision,
-					TraceID:       resp.StargateTrID,
+					TraceID:       state.resp.StargateTrID,
 				}
 				if c.corpusCfg.StoreRawCommand {
 					entry.RawCommand = scrubbedCmd
@@ -572,7 +602,7 @@ func (c *Classifier) reviewWithLLM(ctx context.Context, req ClassifyRequest, cmd
 		default:
 			action = "review"
 		}
-		c.cmdCache.Store(req.Command, req.CWD, result.Decision, action)
+		c.cmdCache.Store(state.req.Command, state.req.CWD, result.Decision, action)
 	}
 
 	// First LLM call.
@@ -584,7 +614,7 @@ func (c *Classifier) reviewWithLLM(ctx context.Context, req ClassifyRequest, cmd
 		Temperature:  c.llmCfg.Temperature,
 	}
 
-	llmResp, err := c.llmProvider.Review(ctx, llmReq)
+	llmResp, err := c.llmProvider.Review(state.ctx, llmReq)
 	if err != nil {
 		if errors.Is(err, llm.ErrRateLimited) {
 			result.Reasoning = truncateStr("LLM rate limit exceeded", c.maxReasonLen)
@@ -652,7 +682,7 @@ func (c *Classifier) reviewWithLLM(ctx context.Context, req ClassifyRequest, cmd
 	llmReq.UserContent = userContent2
 
 	// Second LLM call.
-	llmResp2, err := c.llmProvider.Review(ctx, llmReq)
+	llmResp2, err := c.llmProvider.Review(state.ctx, llmReq)
 	if err != nil {
 		result.Reasoning = truncateStr("Second LLM call failed", c.maxReasonLen)
 		return result
