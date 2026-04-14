@@ -81,7 +81,11 @@ func handleServe(args []string, configPath string, verbose bool) int {
 		fmt.Fprintf(os.Stderr, "serve: %v\n", err)
 		return 1
 	}
-	defer srv.Close()
+	defer func() {
+		if err := srv.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "serve: close: %v\n", err)
+		}
+	}()
 	httpSrv := &http.Server{
 		Addr:              listenAddr,
 		Handler:           srv,
