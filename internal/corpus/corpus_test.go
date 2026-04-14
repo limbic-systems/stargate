@@ -12,9 +12,11 @@ import (
 	"github.com/limbic-systems/stargate/internal/ttlmap"
 )
 
+func boolPtr(b bool) *bool { return &b }
+
 func testCorpusConfig(path string) config.CorpusConfig {
 	return config.CorpusConfig{
-		Enabled:       true,
+		Enabled:       boolPtr(true),
 		Path:          path,
 		MaxPrecedents: 5,
 		MinSimilarity: 0.7,
@@ -24,9 +26,9 @@ func testCorpusConfig(path string) config.CorpusConfig {
 		MaxWritesPerMinute:      10,
 		MaxReasoningLength:      1000,
 		StoreDecisions:          "all",
-		StoreReasoning:          true,
-		StoreRawCommand:         true,
-		StoreUserApprovals:      true,
+		StoreReasoning:          boolPtr(true),
+		StoreRawCommand:         boolPtr(true),
+		StoreUserApprovals:      boolPtr(true),
 		MaxPrecedentsPerPolarity: 3,
 	}
 }

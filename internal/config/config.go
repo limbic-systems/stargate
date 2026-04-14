@@ -195,7 +195,7 @@ type ScrubbingConfig struct {
 
 // CorpusConfig holds precedent corpus settings.
 type CorpusConfig struct {
-	Enabled                bool    `toml:"enabled"`
+	Enabled                *bool   `toml:"enabled"`
 	Path                   string  `toml:"path"`
 	MaxPrecedents          int     `toml:"max_precedents"`
 	MinSimilarity          float64 `toml:"min_similarity"`
@@ -204,14 +204,54 @@ type CorpusConfig struct {
 	PruneInterval          string  `toml:"prune_interval"`
 	MaxWritesPerMinute     int     `toml:"max_writes_per_minute"`
 	StoreDecisions         string  `toml:"store_decisions"`
-	StoreReasoning         bool    `toml:"store_reasoning"`
+	StoreReasoning         *bool   `toml:"store_reasoning"`
 	MaxReasoningLength     int     `toml:"max_reasoning_length"`
-	StoreRawCommand        bool    `toml:"store_raw_command"`
-	StoreUserApprovals     bool    `toml:"store_user_approvals"`
+	StoreRawCommand        *bool   `toml:"store_raw_command"`
+	StoreUserApprovals     *bool   `toml:"store_user_approvals"`
 	MaxPrecedentsPerPolarity int   `toml:"max_precedents_per_polarity"`
-	CommandCacheEnabled    bool    `toml:"command_cache_enabled"`
+	CommandCacheEnabled    *bool   `toml:"command_cache_enabled"`
 	CommandCacheTTL        string  `toml:"command_cache_ttl"`
 	CommandCacheMaxEntries int     `toml:"command_cache_max_entries"`
+}
+
+// corpusEnabled returns whether the corpus is enabled (defaults to true).
+func (c CorpusConfig) IsEnabled() bool {
+	if c.Enabled == nil {
+		return true
+	}
+	return *c.Enabled
+}
+
+// IsStoreReasoning returns whether reasoning should be stored (defaults to true).
+func (c CorpusConfig) IsStoreReasoning() bool {
+	if c.StoreReasoning == nil {
+		return true
+	}
+	return *c.StoreReasoning
+}
+
+// IsStoreRawCommand returns whether raw commands should be stored (defaults to true).
+func (c CorpusConfig) IsStoreRawCommand() bool {
+	if c.StoreRawCommand == nil {
+		return true
+	}
+	return *c.StoreRawCommand
+}
+
+// IsStoreUserApprovals returns whether user approvals should be stored (defaults to true).
+func (c CorpusConfig) IsStoreUserApprovals() bool {
+	if c.StoreUserApprovals == nil {
+		return true
+	}
+	return *c.StoreUserApprovals
+}
+
+// IsCommandCacheEnabled returns whether the command cache is enabled (defaults to true).
+func (c CorpusConfig) IsCommandCacheEnabled() bool {
+	if c.CommandCacheEnabled == nil {
+		return true
+	}
+	return *c.CommandCacheEnabled
 }
 
 // TelemetryConfig holds OpenTelemetry export settings.
@@ -308,11 +348,32 @@ func applyDefaults(cfg *Config) {
 	if cfg.Corpus.Path == "" {
 		cfg.Corpus.Path = "~/.local/share/stargate/precedents.db"
 	}
+	if cfg.Corpus.MaxPrecedents == 0 {
+		cfg.Corpus.MaxPrecedents = 5
+	}
+	if cfg.Corpus.MinSimilarity == 0 {
+		cfg.Corpus.MinSimilarity = 0.7
+	}
+	if cfg.Corpus.MaxAge == "" {
+		cfg.Corpus.MaxAge = "90d"
+	}
+	if cfg.Corpus.MaxEntries == 0 {
+		cfg.Corpus.MaxEntries = 10000
+	}
+	if cfg.Corpus.PruneInterval == "" {
+		cfg.Corpus.PruneInterval = "1h"
+	}
 	if cfg.Corpus.MaxWritesPerMinute == 0 {
 		cfg.Corpus.MaxWritesPerMinute = 10
 	}
+	if cfg.Corpus.StoreDecisions == "" {
+		cfg.Corpus.StoreDecisions = "all"
+	}
 	if cfg.Corpus.MaxReasoningLength == 0 {
 		cfg.Corpus.MaxReasoningLength = 1000
+	}
+	if cfg.Corpus.MaxPrecedentsPerPolarity == 0 {
+		cfg.Corpus.MaxPrecedentsPerPolarity = 3
 	}
 	if cfg.Wrappers == nil {
 		cfg.Wrappers = DefaultWrappers()

@@ -52,7 +52,7 @@ func openCorpusDB(configPath string) (*corpus.Corpus, *config.Config, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to load config: %w", err)
 	}
-	if !cfg.Corpus.Enabled {
+	if !cfg.Corpus.IsEnabled() {
 		return nil, nil, fmt.Errorf("corpus is disabled in config (corpus.enabled = false)")
 	}
 	if cfg.Corpus.Path == "" {

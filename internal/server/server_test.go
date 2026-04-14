@@ -13,6 +13,8 @@ import (
 	"github.com/limbic-systems/stargate/internal/server"
 )
 
+func boolPtr(b bool) *bool { return &b }
+
 // testConfig returns a minimal config with representative RED, GREEN, and
 // YELLOW rules sufficient for the classify endpoint tests.
 func testConfig() *config.Config {
@@ -27,6 +29,7 @@ func testConfig() *config.Config {
 			MaxASTDepth:           64,
 			MaxCommandLength:      65536,
 		},
+		Corpus: config.CorpusConfig{Enabled: boolPtr(false)},
 		Rules: config.RulesConfig{
 			Red: []config.Rule{
 				{

@@ -174,7 +174,7 @@ func New(cfg *config.Config) (*Classifier, error) {
 
 	// Initialize corpus if enabled.
 	var c *corpus.Corpus
-	if cfg.Corpus.Enabled {
+	if cfg.Corpus.IsEnabled() {
 		var err2 error
 		c, err2 = corpus.Open(context.Background(), cfg.Corpus)
 		if err2 != nil {
@@ -200,7 +200,7 @@ func New(cfg *config.Config) (*Classifier, error) {
 		}
 	}
 	var cmdCache *CommandCache
-	if cfg.Corpus.CommandCacheEnabled {
+	if cfg.Corpus.IsCommandCacheEnabled() {
 		cmdCache = NewCommandCache(lifecycleCtx, cacheTTL, cfg.Corpus.CommandCacheMaxEntries)
 	} else {
 		cmdCache = NewCommandCache(lifecycleCtx, 0, 0) // no-op cache
@@ -217,7 +217,7 @@ func New(cfg *config.Config) (*Classifier, error) {
 	}
 
 	// Create feedback handler.
-	feedbackHandler := feedback.NewHandler(lifecycleCtx, c, hmacSecret, cfg.Corpus.StoreUserApprovals)
+	feedbackHandler := feedback.NewHandler(lifecycleCtx, c, hmacSecret, cfg.Corpus.IsStoreUserApprovals())
 
 	return &Classifier{
 		engine:          eng,
@@ -523,10 +523,10 @@ func (c *Classifier) reviewWithLLM(state *classifyState) *LLMReviewResult {
 					Decision:      result.Decision,
 					TraceID:       state.resp.StargateTrID,
 				}
-				if c.corpusCfg.StoreRawCommand {
+				if c.corpusCfg.IsStoreRawCommand() {
 					entry.RawCommand = scrubbedCmd
 				}
-				if c.corpusCfg.StoreReasoning {
+				if c.corpusCfg.IsStoreReasoning() {
 					entry.Reasoning = truncateStr(result.Reasoning, c.corpusCfg.MaxReasoningLength)
 				}
 				entry.RiskFactors = result.RiskFactors
