@@ -2,6 +2,7 @@ package corpus
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -113,19 +114,19 @@ func (c *Corpus) Write(entry PrecedentEntry) error {
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		entry.Signature,
 		entry.SignatureHash,
-		nullableString(entry.RawCommand),
+		toNullString(entry.RawCommand),
 		commandNamesJSON,
 		flagsJSON,
-		nullableString(entry.ASTSummary),
-		nullableString(entry.CWD),
+		toNullString(entry.ASTSummary),
+		toNullString(entry.CWD),
 		entry.Decision,
-		nullableString(entry.Reasoning),
-		nullableString(riskFactorsJSON),
-		nullableString(entry.MatchedRule),
-		nullableString(scopesInPlayJSON),
-		nullableString(entry.TraceID),
-		nullableString(entry.SessionID),
-		nullableString(entry.Agent),
+		toNullString(entry.Reasoning),
+		toNullString(riskFactorsJSON),
+		toNullString(entry.MatchedRule),
+		toNullString(scopesInPlayJSON),
+		toNullString(entry.TraceID),
+		toNullString(entry.SessionID),
+		toNullString(entry.Agent),
 	)
 	if err != nil {
 		return fmt.Errorf("corpus: insert precedent: %w", err)
@@ -152,11 +153,9 @@ func marshalStringSlice(s []string) (string, error) {
 	return string(b), nil
 }
 
-// nullableString returns nil for empty strings so SQLite stores NULL rather
-// than an empty string for optional text columns.
-func nullableString(s string) interface{} {
-	if s == "" {
-		return nil
-	}
-	return s
+// toNullString returns a sql.NullString that is valid (non-NULL) only when s is
+// non-empty, so SQLite stores NULL rather than an empty string for optional
+// text columns.
+func toNullString(s string) sql.NullString {
+	return sql.NullString{String: s, Valid: s != ""}
 }
