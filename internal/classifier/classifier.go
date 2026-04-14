@@ -391,9 +391,8 @@ func (c *Classifier) Classify(ctx context.Context, req ClassifyRequest) *Classif
 	resp.Rule = result.Rule
 
 	// 6. LLM review — only for YELLOW decisions with llm_review=true.
-	// Signature/cmdNames computed lazily since RED/GREEN skip this path.
+	// Signature computed lazily inside reviewWithLLM (after cache miss).
 	if result.LLMReview && c.llmProvider != nil {
-		state.ensureSignature()
 		llmResult := c.reviewWithLLM(state)
 		resp.LLMReview = llmResult
 		resp.Timing.LLMMs = llmResult.DurationMs

@@ -45,11 +45,13 @@ func Open(ctx context.Context, cfg config.CorpusConfig) (*Corpus, error) {
 		dbPath = filepath.Join(home, dbPath[2:])
 	}
 
-	// Create parent directory with 0700.
+	// Create parent directory with 0700 and tighten if it already exists.
 	dir := filepath.Dir(dbPath)
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, fmt.Errorf("corpus: create directory %q: %w", dir, err)
 	}
+	os.Chmod(dir, 0700) //nolint:errcheck // best-effort tighten
+	checkPermissions(dir)
 
 	// Open SQLite database.
 	db, err := sql.Open("sqlite", dbPath)
