@@ -358,8 +358,8 @@ func TestGlobalRateLimit(t *testing.T) {
 		// Make each hash unique by appending the index.
 		uniqueHash := hashString(sig) + string(rune('0'+i))
 		e := sampleEntry(sig, uniqueHash, "allow")
-		// Clear the per-sig limiter so it doesn't block us.
-		c.sigRateLimit.Delete(uniqueHash)
+		// Clear the per-sig limiter so it doesn't block us (key is hash:decision).
+		c.sigRateLimit.Delete(uniqueHash + ":" + e.Decision)
 		if err := c.Write(e); err != nil {
 			t.Fatalf("Write %d: %v", i, err)
 		}
@@ -383,8 +383,8 @@ func writeSig(t *testing.T, c *Corpus, sig, decision string) {
 	t.Helper()
 	hash := hashString(sig)
 	e := sampleEntry(sig, hash, decision)
-	// Remove any existing rate limit entry so we can write multiple.
-	c.sigRateLimit.Delete(hash)
+	// Remove any existing rate limit entry so we can write multiple (key is hash:decision).
+	c.sigRateLimit.Delete(hash + ":" + decision)
 	if err := c.Write(e); err != nil {
 		t.Fatalf("writeSig(%q, %q): %v", decision, sig, err)
 	}
