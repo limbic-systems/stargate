@@ -496,8 +496,15 @@ func (c *Classifier) reviewWithLLM(state *classifyState) *LLMReviewResult {
 			return // no decision to store (LLM error)
 		}
 
+		// Validate LLM decision before persisting — unexpected values from the
+		// LLM (e.g., "maybe") should not pollute the corpus or command cache.
+		validDecision := result.Decision == "allow" || result.Decision == "deny"
+		if !validDecision {
+			return // skip corpus/cache write for invalid decisions
+		}
+
 		// Write judgment to corpus (scrubbed, rate-limited).
-		if c.corpus != nil && result.Decision != "" {
+		if c.corpus != nil {
 			// Check store_decisions filter.
 			shouldStore := true
 			switch c.corpusCfg.StoreDecisions {

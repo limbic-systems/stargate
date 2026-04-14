@@ -1,5 +1,7 @@
 // Package ttlmap provides a generic TTL-based map with background sweep and
-// FIFO eviction by insertion time.
+// eviction by last-write time. When MaxEntries is exceeded, the entry with
+// the oldest write (Set call) is evicted. Set on an existing key refreshes
+// its write timestamp, so actively-updated entries are retained longer.
 package ttlmap
 
 import (
