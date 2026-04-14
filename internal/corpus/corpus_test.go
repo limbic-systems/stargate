@@ -13,6 +13,7 @@ import (
 )
 
 func boolPtr(b bool) *bool { return &b }
+func intPtr(i int) *int    { return &i }
 
 func testCorpusConfig(path string) config.CorpusConfig {
 	return config.CorpusConfig{
@@ -21,7 +22,7 @@ func testCorpusConfig(path string) config.CorpusConfig {
 		MaxPrecedents: 5,
 		MinSimilarity: 0.7,
 		MaxAge:        "90d",
-		MaxEntries:    10000,
+		MaxEntries:    intPtr(10000),
 		PruneInterval: "1h",
 		MaxWritesPerMinute:      10,
 		MaxReasoningLength:      1000,

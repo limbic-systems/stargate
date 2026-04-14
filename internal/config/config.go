@@ -203,7 +203,7 @@ type CorpusConfig struct {
 	MaxPrecedents          int     `toml:"max_precedents"`
 	MinSimilarity          float64 `toml:"min_similarity"`
 	MaxAge                 string  `toml:"max_age"`
-	MaxEntries             int     `toml:"max_entries"`
+	MaxEntries             *int    `toml:"max_entries"`
 	PruneInterval          string  `toml:"prune_interval"`
 	MaxWritesPerMinute     int     `toml:"max_writes_per_minute"`
 	StoreDecisions         string  `toml:"store_decisions"`
@@ -255,6 +255,15 @@ func (c CorpusConfig) IsCommandCacheEnabled() bool {
 		return true
 	}
 	return *c.CommandCacheEnabled
+}
+
+// GetMaxEntries returns the max entries limit. nil (not set) defaults to 10000.
+// 0 means unlimited (per spec: "Set to 0 for unlimited").
+func (c CorpusConfig) GetMaxEntries() int {
+	if c.MaxEntries == nil {
+		return 10000
+	}
+	return *c.MaxEntries
 }
 
 // TelemetryConfig holds OpenTelemetry export settings.
@@ -364,9 +373,8 @@ func applyDefaults(cfg *Config) {
 	if cfg.Corpus.MaxAge == "" {
 		cfg.Corpus.MaxAge = "90d"
 	}
-	if cfg.Corpus.MaxEntries == 0 {
-		cfg.Corpus.MaxEntries = 10000
-	}
+	// MaxEntries: nil means "use default" (10000). Explicit 0 means unlimited.
+	// No default needed — GetMaxEntries() handles nil → 10000.
 	if cfg.Corpus.PruneInterval == "" {
 		cfg.Corpus.PruneInterval = "1h"
 	}
@@ -548,8 +556,8 @@ func (cfg *Config) Validate() error {
 	if cfg.Corpus.MaxPrecedents < 0 {
 		return fmt.Errorf("config: corpus.max_precedents must be non-negative; got %d", cfg.Corpus.MaxPrecedents)
 	}
-	if cfg.Corpus.MaxEntries < 0 {
-		return fmt.Errorf("config: corpus.max_entries must be non-negative; got %d", cfg.Corpus.MaxEntries)
+	if cfg.Corpus.MaxEntries != nil && *cfg.Corpus.MaxEntries < 0 {
+		return fmt.Errorf("config: corpus.max_entries must be non-negative; got %d", *cfg.Corpus.MaxEntries)
 	}
 	if cfg.Corpus.MaxPrecedentsPerPolarity < 0 {
 		return fmt.Errorf("config: corpus.max_precedents_per_polarity must be non-negative; got %d", cfg.Corpus.MaxPrecedentsPerPolarity)

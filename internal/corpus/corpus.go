@@ -212,11 +212,11 @@ func (c *Corpus) prune() {
 	}
 
 	// Prune by count.
-	if c.cfg.MaxEntries > 0 {
+	if maxEntries := c.cfg.GetMaxEntries(); maxEntries > 0 {
 		c.db.Exec(`
 			DELETE FROM precedents WHERE id NOT IN (
 				SELECT id FROM precedents ORDER BY created_at DESC LIMIT ?
 			)
-		`, c.cfg.MaxEntries) //nolint:errcheck
+		`, maxEntries) //nolint:errcheck
 	}
 }

@@ -420,10 +420,10 @@ func (c *Classifier) Classify(ctx context.Context, req ClassifyRequest) *Classif
 				toolUseID = v
 			}
 		}
-		// Compute structural fields if not already done (LLM path skipped when
-		// provider is nil, but feedback still needs them for user_approved entries).
-		state.ensureSignature()
 		if toolUseID != "" {
+			// Compute structural fields if not already done (LLM path skipped when
+			// provider is nil, but feedback still needs them for user_approved entries).
+			state.ensureSignature()
 			token := feedback.GenerateToken(c.hmacSecret, traceID, toolUseID, resp.Decision)
 			resp.FeedbackToken = &token
 			if c.feedbackHandler != nil {

@@ -147,8 +147,9 @@ func TestClear(t *testing.T) {
 // TestClose verifies that the sweep goroutine stops when Close is called.
 // We verify this indirectly: after Close, expired entries are not removed by
 // the sweep (Len still counts only non-expired, but the internal map size
-// does not shrink — we test that the goroutine exits cleanly via a context
-// that would otherwise fire).
+// Verifies Close is idempotent (no panic on double close) and that the map
+// remains readable after Close. Sweep goroutine shutdown is tested separately
+// in TestContextCancellationStopsSweep.
 func TestClose(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
