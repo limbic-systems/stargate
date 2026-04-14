@@ -60,12 +60,9 @@ func parseDayDuration(field, value string) error {
 	if value == "" {
 		return nil
 	}
-	d, err := ParseMaxAge(value)
+	_, err := ParseMaxAge(value)
 	if err != nil {
 		return fmt.Errorf("config: %s: %w", field, err)
-	}
-	if d < 0 {
-		return fmt.Errorf("config: %s: duration must be non-negative; got %q", field, value)
 	}
 	return nil
 }

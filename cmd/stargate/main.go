@@ -67,7 +67,7 @@ var handlers = map[string]subcommandHandler{
 }
 
 // Subcommand handlers are in separate files:
-//   serve.go, hook.go, test.go, configcmd.go, corpus.go
+//   serve.go, hook.go, test.go, config.go, corpus.go
 
 func parseGlobalArgs(args []string) (configFlag string, verbose bool, remaining []string) {
 	i := 0

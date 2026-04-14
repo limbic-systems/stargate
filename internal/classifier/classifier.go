@@ -515,6 +515,16 @@ func (c *Classifier) reviewWithLLM(state *classifyState) *LLMReviewResult {
 				scrubbedCmd := c.scrubber.Command(state.req.Command)
 				astSummary := c.buildASTTextSummary(state.cmds)
 
+				// Extract caller context for corpus entry.
+				var sessionID, agent string
+				if state.req.Context != nil {
+					if v, ok := state.req.Context["session_id"].(string); ok {
+						sessionID = v
+					}
+					if v, ok := state.req.Context["agent"].(string); ok {
+						agent = v
+					}
+				}
 				entry := corpus.PrecedentEntry{
 					Signature:     state.signature,
 					SignatureHash: state.signatureHash,
@@ -524,6 +534,8 @@ func (c *Classifier) reviewWithLLM(state *classifyState) *LLMReviewResult {
 					CWD:           state.req.CWD,
 					Decision:      result.Decision,
 					TraceID:       state.resp.StargateTrID,
+					SessionID:     sessionID,
+					Agent:         agent,
 				}
 				if c.corpusCfg.IsStoreRawCommand() {
 					entry.RawCommand = scrubbedCmd
