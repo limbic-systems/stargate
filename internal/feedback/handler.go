@@ -5,10 +5,12 @@ package feedback
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/limbic-systems/stargate/internal/corpus"
@@ -150,8 +152,11 @@ func (h *Handler) HandleFeedback(w http.ResponseWriter, r *http.Request) {
 			Agent:         info.Agent,
 		}
 		if err := h.corpus.Write(entry); err != nil {
-			// Non-fatal: rate limiting or DB errors are logged but don't fail the request.
-			fmt.Fprintf(os.Stderr, "feedback: corpus write: %v\n", err)
+			// UNIQUE constraint violation = already recorded (idempotent).
+			// Rate limiting = expected under burst. Both are non-fatal.
+			if !strings.Contains(err.Error(), "UNIQUE constraint") && !errors.Is(err, corpus.ErrRateLimited) {
+				fmt.Fprintf(os.Stderr, "feedback: corpus write: %v\n", err)
+			}
 		}
 	}
 
