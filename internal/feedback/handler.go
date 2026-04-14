@@ -103,6 +103,14 @@ func (h *Handler) HandleFeedback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate outcome enum.
+	if req.Outcome != "executed" && req.Outcome != "failed" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "outcome must be \"executed\" or \"failed\"",
+		})
+		return
+	}
+
 	// Lookup trace in TTL map.
 	info, found := h.traceMap.Get(req.StargateTrID)
 	if !found {

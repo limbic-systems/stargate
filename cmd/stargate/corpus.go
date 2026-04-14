@@ -366,11 +366,19 @@ func handleCorpusImport(args []string, configPath string, _ bool) int {
 	}
 
 	filePath := args[0]
-	// The entire file is read into memory before parsing. This is acceptable
-	// because corpus.max_entries caps the corpus at a few thousand entries
-	// (default 10000), keeping the JSON export well within typical memory
-	// budgets. If that limit grows substantially, consider switching to
-	// json.Decoder streaming.
+
+	// Check file size before reading — reject files over 100MB to prevent OOM.
+	info, err := os.Stat(filePath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "corpus import: stat file: %v\n", err)
+		return 1
+	}
+	const maxImportSize = 100 << 20 // 100MB
+	if info.Size() > maxImportSize {
+		fmt.Fprintf(os.Stderr, "corpus import: file too large (%d bytes, max %d)\n", info.Size(), maxImportSize)
+		return 1
+	}
+
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "corpus import: read file: %v\n", err)

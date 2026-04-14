@@ -57,7 +57,9 @@ func Open(ctx context.Context, cfg config.CorpusConfig) (*Corpus, error) {
 		return nil, fmt.Errorf("corpus: open %q: %w", dbPath, err)
 	}
 
-	// Single writer connection — WAL handles concurrent reads at SQLite level.
+	// Single connection serializes all operations. WAL mode is still enabled
+	// for crash recovery and to avoid journal locking, but concurrent read/write
+	// is not leveraged (acceptable for localhost single-user load profile).
 	db.SetMaxOpenConns(1)
 
 	// Enable WAL mode and set busy timeout.

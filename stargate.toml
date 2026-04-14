@@ -522,7 +522,7 @@ max_precedents_per_polarity = 3
 # When enabled, the command cache stores LLM decisions for exact command+CWD
 # pairs to avoid redundant LLM calls within the TTL window. The cache is
 # in-memory only and clears on restart.
-command_cache_enabled = false
+command_cache_enabled = true
 command_cache_ttl = "1h"
 command_cache_max_entries = 10000
 
