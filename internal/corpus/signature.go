@@ -46,12 +46,7 @@ func ComputeSignature(cmds []types.CommandInfo) (signature string, hash string) 
 		}
 	}
 
-	// Use a nil-safe empty array so that an empty command list serializes as
-	// "[]" rather than "null".
-	if tuples == nil {
-		tuples = []signatureTuple{}
-	}
-
+	// make() always returns non-nil, so json.Marshal produces "[]" for empty.
 	b, err := json.Marshal(tuples)
 	if err != nil {
 		// json.Marshal on a []signatureTuple (all string fields) cannot fail in

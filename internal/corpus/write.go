@@ -58,14 +58,16 @@ func (c *Corpus) initRateLimiters(ctx context.Context) {
 // Write inserts a precedent entry, subject to rate limiting.
 // Returns ErrRateLimited if the per-signature or global rate limit is exceeded.
 func (c *Corpus) Write(entry PrecedentEntry) error {
-	// Validate required fields to prevent rate-limiter collapse (empty
-	// SignatureHash would key all writes to "") and invalid corpus data.
-	if entry.SignatureHash == "" || entry.Signature == "" {
-		return fmt.Errorf("corpus: write requires non-empty signature and signature_hash")
+	// Validate required fields.
+	if entry.Signature == "" {
+		return fmt.Errorf("corpus: write requires non-empty signature")
 	}
 	if entry.Decision == "" {
 		return fmt.Errorf("corpus: write requires non-empty decision")
 	}
+	// Compute hash from signature — single source of truth, prevents
+	// inconsistent rows and ensures rate-limit keying is always correct.
+	entry.SignatureHash = hashString(entry.Signature)
 
 	// Serialize rate-limit decisions: Get→Set for both the per-signature and
 	// global limits must be atomic so concurrent callers cannot both pass the

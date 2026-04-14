@@ -3,6 +3,7 @@ package corpus
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -352,14 +353,10 @@ func TestGlobalRateLimit(t *testing.T) {
 	}
 	defer c.Close()
 
-	// Write 3 entries with distinct hashes — all should succeed.
+	// Write 3 entries with distinct signatures — all should succeed.
 	for i := 0; i < 3; i++ {
-		sig := `[{"name":"grep","subcommand":"","flags":[],"context":"top_level"}]`
-		// Make each hash unique by appending the index.
-		uniqueHash := hashString(sig) + string(rune('0'+i))
-		e := sampleEntry(sig, uniqueHash, "allow")
-		// Clear the per-sig limiter so it doesn't block us (key is hash:decision).
-		c.sigRateLimit.Delete(uniqueHash + ":" + e.Decision)
+		sig := fmt.Sprintf(`[{"name":"grep%d","subcommand":"","flags":[],"context":"top_level"}]`, i)
+		e := sampleEntry(sig, "", "allow") // hash computed by Write
 		if err := c.Write(e); err != nil {
 			t.Fatalf("Write %d: %v", i, err)
 		}
@@ -367,8 +364,7 @@ func TestGlobalRateLimit(t *testing.T) {
 
 	// 4th write should hit the global limit.
 	sig := `[{"name":"grep","subcommand":"","flags":[],"context":"top_level"}]`
-	uniqueHash := hashString(sig) + "X"
-	e := sampleEntry(sig, uniqueHash, "allow")
+	e := sampleEntry(sig, "", "allow")
 	err = c.Write(e)
 	if !errors.Is(err, ErrRateLimited) {
 		t.Fatalf("expected ErrRateLimited on global limit, got %v", err)
@@ -413,14 +409,10 @@ func TestLookupSimilarFindsEntries(t *testing.T) {
 	c := openTestCorpus(t)
 	sig := gitSig()
 
-	// Write 3 allow entries with the same signature (each with a distinct hash
-	// to bypass per-sig rate limit).
+	// Write 3 allow entries with the same signature; clear the per-sig rate
+	// limit between writes so each one is accepted.
 	for i := 0; i < 3; i++ {
-		hash := hashString(sig) + string(rune('a'+i))
-		e := sampleEntry(sig, hash, "allow")
-		if err := c.Write(e); err != nil {
-			t.Fatalf("Write %d: %v", i, err)
-		}
+		writeSig(t, c, sig, "allow")
 	}
 
 	results, err := c.LookupSimilar([]string{"git"}, sig, defaultLookupConfig(c))
@@ -438,19 +430,13 @@ func TestLookupSimilarPolarityBalance(t *testing.T) {
 	c := openTestCorpus(t)
 	sig := gitSig()
 
+	// Write 3 allow and 3 deny entries; clear the per-sig rate limit between
+	// writes (keyed on hash:decision) so each one is accepted.
 	for i := 0; i < 3; i++ {
-		hash := hashString(sig) + "allow" + string(rune('a'+i))
-		e := sampleEntry(sig, hash, "allow")
-		if err := c.Write(e); err != nil {
-			t.Fatalf("Write allow %d: %v", i, err)
-		}
+		writeSig(t, c, sig, "allow")
 	}
 	for i := 0; i < 3; i++ {
-		hash := hashString(sig) + "deny" + string(rune('a'+i))
-		e := sampleEntry(sig, hash, "deny")
-		if err := c.Write(e); err != nil {
-			t.Fatalf("Write deny %d: %v", i, err)
-		}
+		writeSig(t, c, sig, "deny")
 	}
 
 	cfg := LookupConfig{
@@ -488,8 +474,7 @@ func TestLookupSimilarUserApprovedCountsAsPositive(t *testing.T) {
 	sig := gitSig()
 
 	// Write one user_approved entry.
-	hash := hashString(sig) + "ua"
-	e := sampleEntry(sig, hash, "user_approved")
+	e := sampleEntry(sig, "", "user_approved")
 	if err := c.Write(e); err != nil {
 		t.Fatalf("Write user_approved: %v", err)
 	}
@@ -513,8 +498,7 @@ func TestLookupSimilarJaccardFilter(t *testing.T) {
 
 	// Write an entry with a "git" signature.
 	gitSignature := gitSig()
-	hash := hashString(gitSignature) + "j"
-	e := sampleEntry(gitSignature, hash, "allow")
+	e := sampleEntry(gitSignature, "", "allow")
 	if err := c.Write(e); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
