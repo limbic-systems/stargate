@@ -133,6 +133,12 @@ func ReadTrace(dir, toolUseID string) (TraceData, error) {
 	if err := json.NewDecoder(f).Decode(&data); err != nil {
 		return TraceData{}, fmt.Errorf("decoding trace data from %q: %w", path, err)
 	}
+
+	// Defense-in-depth: verify the embedded tool_use_id matches the filename.
+	if data.ToolUseID != toolUseID {
+		return TraceData{}, fmt.Errorf("trace file %q: tool_use_id mismatch (file=%q, expected=%q)", path, data.ToolUseID, toolUseID)
+	}
+
 	return data, nil
 }
 

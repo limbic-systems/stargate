@@ -265,6 +265,7 @@ func mapActionToDecision(action string) string {
 }
 
 // writeAllowResponse writes a permissionDecision=allow to stdout and returns exit 0.
+// Returns exit 2 if writing to stdout fails (broken pipe, etc.).
 func writeAllowResponse(stdout io.Writer, reason string) int {
 	out := hookOutput{
 		HookSpecificOutput: &hookSpecificOutput{
@@ -273,11 +274,14 @@ func writeAllowResponse(stdout io.Writer, reason string) int {
 			PermissionDecisionReason: reason,
 		},
 	}
-	json.NewEncoder(stdout).Encode(out) //nolint:errcheck
+	if err := json.NewEncoder(stdout).Encode(out); err != nil {
+		return 2
+	}
 	return 0
 }
 
 // writeClassifyResponse maps the classify response to hook output and writes it.
+// Returns exit 2 if writing to stdout fails.
 func writeClassifyResponse(stdout io.Writer, resp *ClassifyResponse) int {
 	decision := mapActionToDecision(resp.Action)
 
@@ -293,6 +297,8 @@ func writeClassifyResponse(stdout io.Writer, resp *ClassifyResponse) int {
 		out.SystemMessage = resp.Guidance
 	}
 
-	json.NewEncoder(stdout).Encode(out) //nolint:errcheck
+	if err := json.NewEncoder(stdout).Encode(out); err != nil {
+		return 2
+	}
 	return 0
 }

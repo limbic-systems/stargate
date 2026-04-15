@@ -164,6 +164,10 @@ func doPostWithRetry(ctx context.Context, cfg ClientConfig, url string, body []b
 
 	resp, err := do()
 	if err != nil && isConnectionRefused(err) {
+		// Close the response body from the failed attempt if present.
+		if resp != nil {
+			resp.Body.Close() //nolint:errcheck
+		}
 		// Retry exactly once after a short delay.
 		select {
 		case <-ctx.Done():
@@ -171,6 +175,10 @@ func doPostWithRetry(ctx context.Context, cfg ClientConfig, url string, body []b
 		case <-time.After(100 * time.Millisecond):
 		}
 		resp, err = do()
+	}
+
+	if err != nil && resp != nil {
+		resp.Body.Close() //nolint:errcheck
 	}
 
 	return resp, err

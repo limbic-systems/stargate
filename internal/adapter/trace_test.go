@@ -261,7 +261,9 @@ func TestCleanupOrphans_SkipsSymlinks(t *testing.T) {
 	// Back-date the external target so that if CleanupOrphans mistakenly follows the
 	// symlink and deletes the resolved file, we'd detect it.
 	past := time.Now().Add(-2 * time.Hour)
-	_ = os.Chtimes(target, past, past)
+	if err := os.Chtimes(target, past, past); err != nil {
+		t.Fatalf("Chtimes: %v", err)
+	}
 
 	if err := CleanupOrphans(traceDir, 1*time.Hour); err != nil {
 		t.Fatalf("CleanupOrphans: %v", err)
