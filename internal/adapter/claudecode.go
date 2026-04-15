@@ -1,0 +1,200 @@
+package adapter
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"time"
+)
+
+// maxStdinBytes is the maximum size of stdin we'll read (1 MB).
+const maxStdinBytes = 1 << 20
+
+// orphanMaxAge is the maximum age of orphan trace files before cleanup.
+const orphanMaxAge = 5 * time.Minute
+
+// preToolUseInput is Claude Code's PreToolUse JSON payload from stdin.
+type preToolUseInput struct {
+	ToolName  string          `json:"tool_name"`
+	ToolInput json.RawMessage `json:"tool_input"`
+	ToolUseID string          `json:"tool_use_id"`
+	SessionID string          `json:"session_id"`
+	CWD       string          `json:"cwd"`
+}
+
+// bashToolInput extracts the command from Bash tool input.
+type bashToolInput struct {
+	Command string `json:"command"`
+}
+
+// hookOutput is the JSON written to stdout for Claude Code hooks.
+type hookOutput struct {
+	HookSpecificOutput *hookSpecificOutput `json:"hookSpecificOutput,omitempty"`
+	SystemMessage      string              `json:"systemMessage,omitempty"`
+}
+
+// hookSpecificOutput contains the permission decision for PreToolUse hooks.
+type hookSpecificOutput struct {
+	HookEventName            string `json:"hookEventName"`
+	PermissionDecision       string `json:"permissionDecision"`
+	PermissionDecisionReason string `json:"permissionDecisionReason,omitempty"`
+}
+
+// HandlePreToolUse reads Claude Code's PreToolUse JSON from stdin,
+// classifies the command via the stargate server, and writes the hook
+// response to stdout. Stores trace data for post-tool-use correlation.
+// Returns exit code: 0 for valid hook responses, 2 for fatal errors.
+func HandlePreToolUse(ctx context.Context, stdin io.Reader, stdout io.Writer, cfg ClientConfig) int {
+	// Run orphan cleanup best-effort before classification.
+	cleanupOrphansBestEffort()
+
+	// Read and parse stdin.
+	input, err := parsePreToolUseInput(stdin)
+	if err != nil {
+		fmt.Fprintf(io.Discard, "adapter: %v\n", err) // stderr wired by caller
+		return 2
+	}
+
+	// Non-Bash tools pass through immediately.
+	if input.ToolName != "Bash" {
+		return writeAllowResponse(stdout, "non-Bash tool: "+input.ToolName)
+	}
+
+	// Extract command from tool_input.
+	var toolInput bashToolInput
+	if err := json.Unmarshal(input.ToolInput, &toolInput); err != nil {
+		return 2
+	}
+	if toolInput.Command == "" {
+		return 2
+	}
+
+	// Validate tool_use_id before any filesystem operation.
+	if err := ValidateToolUseID(input.ToolUseID); err != nil {
+		return 2
+	}
+
+	// Classify via stargate server.
+	classifyReq := ClassifyRequest{
+		Command: toolInput.Command,
+		CWD:     input.CWD,
+		Context: map[string]any{
+			"session_id":  input.SessionID,
+			"tool_use_id": input.ToolUseID,
+		},
+	}
+
+	resp, err := Classify(ctx, cfg, classifyReq)
+	if err != nil {
+		return 2
+	}
+
+	// Store trace for post-tool-use feedback correlation.
+	if err := storeTrace(input.ToolUseID, resp); err != nil {
+		// Trace write failure is non-fatal — classification still valid.
+		// Feedback correlation will fail but the command decision is correct.
+		_ = err
+	}
+
+	// Map action to permission decision and write response.
+	return writeClassifyResponse(stdout, resp)
+}
+
+// parsePreToolUseInput reads and validates the PreToolUse JSON from stdin.
+func parsePreToolUseInput(stdin io.Reader) (*preToolUseInput, error) {
+	limited := io.LimitReader(stdin, maxStdinBytes+1)
+	data, err := io.ReadAll(limited)
+	if err != nil {
+		return nil, fmt.Errorf("reading stdin: %w", err)
+	}
+	if len(data) > maxStdinBytes {
+		return nil, fmt.Errorf("stdin exceeds %d bytes", maxStdinBytes)
+	}
+	if len(data) == 0 {
+		return nil, fmt.Errorf("stdin is empty")
+	}
+
+	var input preToolUseInput
+	if err := json.Unmarshal(data, &input); err != nil {
+		return nil, fmt.Errorf("parsing stdin JSON: %w", err)
+	}
+
+	return &input, nil
+}
+
+// storeTrace writes the trace file for post-tool-use correlation.
+func storeTrace(toolUseID string, resp *ClassifyResponse) error {
+	dir, err := TraceDir()
+	if err != nil {
+		return err
+	}
+
+	token := ""
+	if resp.FeedbackToken != nil {
+		token = *resp.FeedbackToken
+	}
+
+	return WriteTrace(dir, TraceData{
+		StargateTrID:  resp.StargateTrID,
+		FeedbackToken: token,
+		ToolUseID:     toolUseID,
+	})
+}
+
+// cleanupOrphansBestEffort runs orphan cleanup, ignoring errors.
+func cleanupOrphansBestEffort() {
+	dir, err := TraceDir()
+	if err != nil {
+		return
+	}
+	_ = CleanupOrphans(dir, orphanMaxAge)
+}
+
+// mapActionToDecision converts a classify action to a Claude Code permission decision.
+// Unknown actions map to "deny" (fail-closed).
+func mapActionToDecision(action string) string {
+	switch action {
+	case "allow":
+		return "allow"
+	case "review":
+		return "ask"
+	case "block":
+		return "deny"
+	default:
+		return "deny"
+	}
+}
+
+// writeAllowResponse writes a permissionDecision=allow to stdout and returns exit 0.
+func writeAllowResponse(stdout io.Writer, reason string) int {
+	out := hookOutput{
+		HookSpecificOutput: &hookSpecificOutput{
+			HookEventName:            "PreToolUse",
+			PermissionDecision:       "allow",
+			PermissionDecisionReason: reason,
+		},
+	}
+	json.NewEncoder(stdout).Encode(out) //nolint:errcheck
+	return 0
+}
+
+// writeClassifyResponse maps the classify response to hook output and writes it.
+func writeClassifyResponse(stdout io.Writer, resp *ClassifyResponse) int {
+	decision := mapActionToDecision(resp.Action)
+
+	out := hookOutput{
+		HookSpecificOutput: &hookSpecificOutput{
+			HookEventName:            "PreToolUse",
+			PermissionDecision:       decision,
+			PermissionDecisionReason: resp.Reason,
+		},
+	}
+
+	if resp.Guidance != "" {
+		out.SystemMessage = resp.Guidance
+	}
+
+	json.NewEncoder(stdout).Encode(out) //nolint:errcheck
+	return 0
+}
