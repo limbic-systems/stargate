@@ -13,6 +13,7 @@ import (
 
 	"github.com/limbic-systems/stargate/internal/classifier"
 	"github.com/limbic-systems/stargate/internal/config"
+	"github.com/limbic-systems/stargate/internal/telemetry"
 )
 
 // Server is the stargate HTTP server.
@@ -48,6 +49,14 @@ func New(cfg *config.Config) (*Server, error) {
 	s.cfg.Store(cfg)
 	s.registerRoutes()
 	return s, nil
+}
+
+// SetTelemetry injects a Telemetry implementation into the server and its
+// classifier. Must be called before serving requests.
+func (s *Server) SetTelemetry(t telemetry.Telemetry) {
+	if s.clf != nil {
+		s.clf.SetTelemetry(t)
+	}
 }
 
 // ServeHTTP implements http.Handler by delegating to the mux.
