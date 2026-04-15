@@ -259,7 +259,8 @@ func (lt *LiveTelemetry) Shutdown(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-// --- Stub methods (implemented in metrics.go, logger.go, tracer.go) ---
+// --- LiveTelemetry span, trace, and logging methods ---
+// Metrics are in metrics.go, logging in logger.go. Span/trace methods below.
 
 // --- LiveTelemetry span and trace methods ---
 
@@ -290,6 +291,7 @@ func (lt *LiveTelemetry) StartFeedbackSpan(ctx context.Context, originalTraceID 
 			opts = append(opts, trace.WithLinks(link))
 		}
 	}
+	opts = append(opts, trace.WithNewRoot())
 	ctx, span := lt.tracer.Start(ctx, "stargate.feedback", opts...)
 	if originalTraceID != "" {
 		span.SetAttributes(attribute.String("stargate.trace_id", originalTraceID))
