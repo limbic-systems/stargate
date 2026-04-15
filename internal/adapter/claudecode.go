@@ -143,6 +143,12 @@ func HandlePreToolUse(ctx context.Context, stdin io.Reader, stdout io.Writer, st
 		return 2
 	}
 
+	// Reject empty tool_name — required field, fail-closed.
+	if input.ToolName == "" {
+		fmt.Fprintf(stderr, "adapter: tool_name is empty\n")
+		return 2
+	}
+
 	// Non-Bash tools pass through immediately.
 	if input.ToolName != "Bash" {
 		return writeAllowResponse(stdout, "non-Bash tool: "+input.ToolName)

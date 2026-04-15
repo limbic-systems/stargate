@@ -249,6 +249,17 @@ func TestHandlePreToolUse_MissingCommand(t *testing.T) {
 	}
 }
 
+func TestHandlePreToolUse_EmptyToolName(t *testing.T) {
+	stdin := strings.NewReader(makePreToolUseInput("", "ls", "toolu_empty"))
+	var stdout bytes.Buffer
+	cfg := adapter.ClientConfig{URL: "http://127.0.0.1:0", Timeout: 1 * time.Second}
+
+	code := adapter.HandlePreToolUse(context.Background(), stdin, &stdout, io.Discard, cfg)
+	if code != 2 {
+		t.Errorf("exit code: got %d, want 2 for empty tool_name", code)
+	}
+}
+
 func TestHandlePreToolUse_InvalidToolUseID(t *testing.T) {
 	// Path traversal in tool_use_id.
 	stdin := strings.NewReader(makePreToolUseInput("Bash", "ls", "../../etc/evil"))
