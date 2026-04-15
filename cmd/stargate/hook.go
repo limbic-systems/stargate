@@ -29,6 +29,10 @@ Flags:
 func handleHook(args []string, _ string, verbose bool) int {
 	agent, event, urlFlag, timeout, allowRemote, err := parseHookFlags(args)
 	if err != nil {
+		if err == errShowHelp {
+			fmt.Print(hookUsage)
+			return 0
+		}
 		fmt.Fprintf(os.Stderr, "hook: %v\n", err)
 		return 2
 	}
@@ -84,6 +88,9 @@ func resolveURL(flagURL string) string {
 	return defaultStargateURL
 }
 
+// errShowHelp is returned by parseHookFlags when --help is requested.
+var errShowHelp = fmt.Errorf("help requested")
+
 // parseHookFlags parses hook-specific flags from args.
 func parseHookFlags(args []string) (agent, event, url string, timeout time.Duration, allowRemote bool, err error) {
 	event = "pre-tool-use"
@@ -95,8 +102,7 @@ func parseHookFlags(args []string) (agent, event, url string, timeout time.Durat
 
 		switch {
 		case arg == "--help" || arg == "-h":
-			fmt.Print(hookUsage)
-			os.Exit(0)
+			return "", "", "", 0, false, errShowHelp
 
 		case arg == "--agent":
 			i++

@@ -3,10 +3,8 @@ package adapter_test
 import (
 	"context"
 	"encoding/json"
-	"net"
 	"net/http"
 	"net/http/httptest"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -142,84 +140,21 @@ func TestClassify_Timeout(t *testing.T) {
 	}
 }
 
-// TestClassify_RetryOnConnectionRefused verifies that Classify retries exactly
-// once when the server is initially not listening (ECONNREFUSED), then succeeds
-// when the server becomes available during the retry window.
-//
-// Strategy:
-//  1. Reserve a free port by binding and immediately closing it.
-//  2. Start Classify — the first attempt hits ECONNREFUSED on the closed port.
-//  3. A goroutine starts a server on that port during the 100ms retry delay.
-//  4. The second attempt succeeds.
-func TestClassify_RetryOnConnectionRefused(t *testing.T) {
-	// Step 1: find a free port and immediately release it.
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	addr := l.Addr().String()
-	l.Close() // port is now closed; next connect → ECONNREFUSED
-
-	// Step 2: prepare a server that will start on that port.
-	var callCount atomic.Int32
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		callCount.Add(1)
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(adapter.ClassifyResponse{ //nolint:errcheck
-			Decision:     "green",
-			Action:       "allow",
-			StargateTrID: "trace-retry",
-		})
-	})
-
-	// Start a server on the reserved port in a goroutine. It will be
-	// ready before the 100ms retry delay expires.
-	started := make(chan struct{})
-	go func() {
-		listener, lerr := net.Listen("tcp", addr)
-		if lerr != nil {
-			close(started)
-			return
-		}
-		retrySrv := &httptest.Server{
-			Listener: listener,
-			Config:   &http.Server{Handler: handler},
-		}
-		retrySrv.Start()
-		close(started)
-		// Block until test cleanup closes the server.
-		<-make(chan struct{})
-	}()
-
-	// Wait for server to be listening before we call Classify, but
-	// the port was closed when Classify starts its first attempt because
-	// the goroutine races with the first HTTP dial. We wait for the
-	// server to start here, then call Classify — the first attempt will
-	// succeed since the server is up. Instead, to truly test retry,
-	// we call Classify BEFORE waiting for started.
+// TestClassify_ConnectionRefusedReturnsError verifies that Classify returns
+// an error when the server is not listening (ECONNREFUSED). The retry logic
+// (one retry after 100ms) is exercised but not deterministically tested here
+// because doPostWithRetry creates its own http.Client internally — injecting
+// a custom transport would require API changes that are out of scope.
+func TestClassify_ConnectionRefusedReturnsError(t *testing.T) {
+	// Point at a port that's definitely not listening.
 	cfg := adapter.ClientConfig{
-		URL:     "http://" + addr,
-		Timeout: 3 * time.Second,
+		URL:     "http://127.0.0.1:1",
+		Timeout: 500 * time.Millisecond,
 	}
 
-	resp, classifyErr := adapter.Classify(context.Background(), cfg, adapter.ClassifyRequest{Command: "ls"})
-
-	// Wait for server goroutine to finish starting.
-	select {
-	case <-started:
-	case <-time.After(2 * time.Second):
-		t.Fatal("retry server goroutine did not start in time")
-	}
-
-	if classifyErr != nil {
-		t.Skipf("retry test inconclusive (port rebind race): %v", classifyErr)
-	}
-
-	if resp == nil || resp.Action != "allow" {
-		t.Errorf("expected allow response, got: %v (err: %v)", resp, classifyErr)
-	}
-	if callCount.Load() != 1 {
-		t.Errorf("handler call count: got %d, want 1", callCount.Load())
+	_, err := adapter.Classify(context.Background(), cfg, adapter.ClassifyRequest{Command: "ls"})
+	if err == nil {
+		t.Fatal("expected error for connection refused, got nil")
 	}
 }
 
