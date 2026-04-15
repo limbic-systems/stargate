@@ -1815,6 +1815,76 @@ git commit -m "feat(classifier): integrate LLM review with rate limiting, file r
 
 ## M5: Precedent Corpus
 
+> **M5 Retrospective (post-implementation):** 100 threads, 34 Copilot reviews, 1 PR.
+> The single-PR approach (lesson from M4's 91-thread split-PR amplification) worked
+> well — no cross-PR context loss, no rebase conflicts, no "unused field" false
+> positives. However, 100 threads is the highest yet (M1:84 → M2:61 → M3:28 → M4:91 → M5:100),
+> driven by M5's scope (4700+ lines, 35 files, 6 new packages) and the iterative
+> refactoring done during review (classifyState, defer postProcess, config defaults).
+>
+> **Six patterns drove the 100 threads:**
+>
+> 1. **Concurrency safety (22 threads)** — Rate limit Get→Set races, TTLMap Get race
+>    on concurrent refresh, mutex introduction, check-both-before-commit ordering.
+>    **Lesson:** Any shared mutable state touched from concurrent goroutines needs
+>    its concurrency story documented at the function level, not just the struct level.
+>    The corpus.Write mutex was raised 5+ times before the final design was accepted.
+>
+> 2. **Config default semantics (18 threads)** — Zero-value-as-default for int/float
+>    fields (MaxPrecedents, MinSimilarity, CommandCacheMaxEntries) raised repeatedly.
+>    The `*bool` pattern for Enabled/StoreReasoning worked well. The zero-value fields
+>    needed inline comments explaining the design choice. **Lesson:** When a Go zero
+>    value collides with a meaningful config value, decide at design time whether to
+>    use a pointer. Document the decision on the struct field, not just in applyDefaults.
+>
+> 3. **API contract consistency (15 threads)** — Cache hit Performed=true, outcome
+>    enum validation, LLM decision validation before corpus write, HMAC prefix,
+>    DisallowUnknownFields on /feedback, outcome validation. **Lesson:** Every
+>    HTTP endpoint and every struct that crosses a package boundary needs exhaustive
+>    input validation specified in the plan, not discovered in review.
+>
+> 4. **Lifecycle management (12 threads)** — Goroutine leaks in tests (context.Background
+>    → t.Context), srv.Close not called on error paths, defer srv.Close dropping errors,
+>    classifier lifecycle context for cache/feedback goroutines. **Lesson:** Every
+>    constructor that starts a goroutine must accept context.Context. Every Close must
+>    be deferred. Tests must use t.Context or t.Cleanup.
+>
+> 5. **Comment/doc accuracy (15 threads)** — FIFO vs LRU, insertedAt vs writtenAt,
+>    configcmd.go reference, TestClose comment, WAL concurrent reads comment, dead nil
+>    check, unused parameter hallucination. **Lesson:** Comments that describe behavior
+>    must be updated when behavior changes. Copilot is aggressive about comment/code
+>    divergence — keeping them in sync prevents recurring findings.
+>
+> 6. **Copilot hallucinations and recurring opinions (18 threads)** — range-over-int
+>    "won't compile" (Go 1.22+), unused parameter "won't compile" (Go allows this),
+>    zero-value defaulting (raised 6 times after documentation), rate-limit ordering
+>    (raised 5 times after fail-closed documentation). **Lesson:** Document design
+>    decisions with inline comments at the exact code location. This stopped the
+>    zero-value and fail-closed recurring findings. Copilot hallucinations about Go
+>    syntax should be silently resolved.
+>
+> **Key bugs caught by review (would have been production issues):**
+> - user_approved feedback silently dropped by per-signature rate limit (hash:decision keying)
+> - Structural fields empty when LLM provider nil (feedback entries invisible to lookups)
+> - LLM decision "maybe" cached and replayed (now validated to allow/deny only)
+> - Signature sort by PipelinePosition corrupted multi-pipeline commands
+> - Cache hit returned Performed=true with "LLM review approved" reason string
+>
+> **Key refactors done during review:**
+> - classifyState struct with lazy ensureSignature (8 params → 1)
+> - defer postProcess (4 explicit calls → 1 defer, cache hit before defer)
+> - cmd/stargate split into one file per subcommand
+> - HandleFeedback owned by classifier (not leaked through server)
+> - Write computes SignatureHash internally (single source of truth)
+> - Comprehensive config defaults with *bool/*int for nil-vs-zero disambiguation
+>
+> **Trend:** M1:84 → M2:61 → M3:28 → M4:91 → M5:100. Thread count correlates
+> with scope (M3 was small, M4/M5 were large). Per-line density is roughly
+> constant. The panel review continues to catch design-level issues before
+> implementation. The single-PR approach eliminated the split-PR amplification
+> that inflated M4. For M6 (Agent Adapters), the scope is smaller and should
+> return toward the M3 trajectory.
+
 Goal: SQLite-backed judgment store with structural signatures, similarity search, precedent injection, command cache, and feedback endpoint. Incorporates all findings from 3 rounds of expert panel review.
 
 > **Panel design decisions (pre-implementation):**
