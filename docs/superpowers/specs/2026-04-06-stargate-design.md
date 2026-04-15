@@ -1471,6 +1471,12 @@ Flags:
 2. `STARGATE_URL` environment variable
 3. `http://127.0.0.1:9099` (default)
 
+**Localhost enforcement:** The resolved URL host must be a loopback address (`127.0.0.1`, `[::1]`). Non-loopback URLs are rejected with exit 2 and a warning on stderr. This prevents a malicious `.envrc` or environment variable from redirecting all command traffic to an external server. An explicit `--allow-remote` flag overrides this check for operators who intentionally run stargate on a remote host.
+
+**Config loading:** The hook does NOT load `stargate.toml`. It only needs the server URL and timeout, resolved from flags and environment variables. This avoids coupling to the config file format and eliminates startup overhead from parsing rules/scopes/LLM settings on every invocation.
+
+**Stdin size limit:** Stdin reads are capped at 1MB. Payloads exceeding this limit cause exit 2. This prevents OOM from malicious or buggy agent payloads.
+
 #### Claude Code Adapter (`--agent claude-code`)
 
 **Event: `pre-tool-use` (default)**
@@ -1505,10 +1511,28 @@ Sends `POST /classify` and translates the response:
 | `"allow"` | `"allow"` | `0` | Command executes silently. |
 | `"review"` | `"ask"` | `0` | User sees a permission prompt with the reason. If the user approves, the command executes. |
 | `"block"` | `"deny"` | `0` | Command blocked. Reason fed back to the agent. |
+| Any other value | `"deny"` | `0` | Fail-closed: unknown action values map to deny. |
 
-The adapter stores the `stargate_trace_id`, `feedback_token`, and `tool_use_id` from the classification response for use by the post-tool-use event. Storage mechanism: writes to a temp file keyed by `tool_use_id` under a stargate-owned directory at `$XDG_RUNTIME_DIR/stargate/<tool_use_id>.json` (falling back to `$TMPDIR/stargate-$UID/<tool_use_id>.json` on macOS). The directory is created with permissions `0700` and files are written with permissions `0600` using `O_NOFOLLOW` semantics to prevent symlink attacks. Orphaned files older than 5 minutes are cleaned up on adapter startup.
+**Input validation:** The `tool_use_id` field from stdin is validated against `^[a-zA-Z0-9_-]+$` before any filesystem operation. Values containing path separators, null bytes, or other unsafe characters are rejected with exit 2. This prevents path traversal attacks where a crafted tool_use_id like `../../etc/cron.d/evil` could write files outside the trace directory.
 
-Exit code `2` is reserved for catastrophic adapter failures (server unreachable, malformed stdin). Claude Code treats exit 2 as a blocking error.
+**Trace file storage:** The adapter stores a minimal trace file for post-tool-use feedback correlation. The file is keyed by `tool_use_id` under a stargate-owned directory at `$XDG_RUNTIME_DIR/stargate/<tool_use_id>.json` (falling back to `$TMPDIR/stargate-$UID/<tool_use_id>.json` on macOS).
+
+**Trace file schema** (only what's needed for feedback — no command text or classification result):
+```json
+{"stargate_trace_id": "sg_tr_...", "feedback_token": "...", "tool_use_id": "toolu_..."}
+```
+
+**Trace file security:**
+- Directory: created with `0700`, ownership verified via `Lstat` after creation.
+- File write: `0600` permissions, `O_NOFOLLOW` semantics to prevent symlink attacks.
+- File read (post-tool-use): also uses `O_NOFOLLOW` — prevents symlink TOCTOU between pre and post phases.
+- Orphan cleanup: uses `Lstat` (not `Stat`) when enumerating. Symlinks are skipped, only regular files are deleted. Files older than 5 minutes are cleaned up on adapter startup.
+- Trace file is deleted only on successful feedback submission. Failed submissions preserve the file for the orphan cleanup window, allowing a retry opportunity.
+
+**Exit code semantics:**
+- Exit `0`: all valid hook responses (allow, ask, deny) — communicated via stdout JSON.
+- Exit `2`: catastrophic adapter failures (server unreachable, malformed stdin, invalid tool_use_id). Claude Code treats exit 2 as a **blocking error** (fail-closed).
+- Exit `1` is **never used** by the adapter. Claude Code treats exit 1 as a non-blocking error (fail-open) — using it would silently allow commands when the adapter fails. All error paths must use exit 2.
 
 **Event: `post-tool-use`**
 
@@ -1526,7 +1550,7 @@ Reads Claude Code's `PostToolUse` JSON payload from stdin. Extracts `tool_use_id
 
 This is fire-and-forget — exits 0 immediately regardless of the feedback response. The feedback endpoint is best-effort; failure does not affect the agent.
 
-Cleans up the temp file after sending.
+Cleans up the temp file only on successful feedback submission. If the POST fails, the trace file is preserved for the orphan cleanup window (5 min), allowing a retry opportunity on the next post-tool-use invocation for the same tool_use_id.
 
 #### Claude Code Hook Configuration
 
