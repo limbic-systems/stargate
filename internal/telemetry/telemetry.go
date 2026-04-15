@@ -123,6 +123,7 @@ type LiveTelemetry struct {
 	loggerProvider *sdklog.LoggerProvider
 	tracer         trace.Tracer
 	logger         otellog.Logger
+	metrics        *metrics
 	traceMap       *ttlmap.TTLMap[string, string]
 }
 
@@ -196,6 +197,16 @@ func Init(cfg config.TelemetryConfig) (Telemetry, error) {
 		)
 	}
 
+	// Register metric instruments.
+	if lt.meterProvider != nil {
+		m := lt.meterProvider.Meter("stargate")
+		mt, err := initMetrics(m)
+		if err != nil {
+			return nil, fmt.Errorf("telemetry: registering metrics: %w", err)
+		}
+		lt.metrics = mt
+	}
+
 	// Create tracer and logger instances.
 	if lt.tracerProvider != nil {
 		lt.tracer = lt.tracerProvider.Tracer("stargate")
@@ -251,20 +262,9 @@ func (lt *LiveTelemetry) Shutdown(ctx context.Context) error {
 
 // --- Stub methods (implemented in metrics.go, logger.go, tracer.go) ---
 
-// --- LiveTelemetry interface stubs ---
-// These are placeholder implementations. Metrics, logging, and tracing
-// methods are fully implemented in metrics.go, logger.go, and tracer.go.
+// --- LiveTelemetry span and trace methods ---
 
 func (lt *LiveTelemetry) LogClassification(_ context.Context, _ ClassifyResult) {}
-func (lt *LiveTelemetry) RecordClassification(_, _ string, _ float64)           {}
-func (lt *LiveTelemetry) RecordLLMCall(_ string, _ float64)                     {}
-func (lt *LiveTelemetry) RecordParseError()                                     {}
-func (lt *LiveTelemetry) RecordFeedback(_ string)                               {}
-func (lt *LiveTelemetry) RecordCorpusHit(_ string)                              {}
-func (lt *LiveTelemetry) RecordCorpusWrite(_ string)                            {}
-func (lt *LiveTelemetry) RecordScopeResolution(_, _ string)                     {}
-func (lt *LiveTelemetry) SetRulesLoaded(_ string, _ int)                        {}
-func (lt *LiveTelemetry) SetCorpusEntries(_ string, _ int)                      {}
 
 func (lt *LiveTelemetry) StartClassifySpan(ctx context.Context) (context.Context, trace.Span) {
 	return lt.tracer.Start(ctx, "stargate.classify")
