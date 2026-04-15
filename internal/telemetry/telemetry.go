@@ -346,11 +346,8 @@ func buildExportOpts(cfg config.TelemetryConfig) exportOpts {
 			opts.log = append(opts.log, otlploghttp.WithInsecure())
 		}
 
-		if u.Path != "" && u.Path != "/" {
-			opts.trace = append(opts.trace, otlptracehttp.WithURLPath(u.Path))
-			opts.metric = append(opts.metric, otlpmetrichttp.WithURLPath(u.Path))
-			opts.log = append(opts.log, otlploghttp.WithURLPath(u.Path))
-		}
+		// Don't set WithURLPath — OTel exporters append signal-specific
+		// paths (/v1/traces, /v1/metrics, /v1/logs) automatically.
 	}
 
 	opts.trace = append(opts.trace, otlptracehttp.WithEndpoint(endpoint))

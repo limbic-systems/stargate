@@ -22,10 +22,16 @@ func severityFromDecision(decision string) otellog.Severity {
 	}
 }
 
-// truncateBytes truncates s to maxBytes using byte length, not rune count.
+// truncateBytes truncates s to at most maxBytes without splitting a
+// multi-byte UTF-8 rune. If the cut point falls in the middle of a
+// rune, it backs up to the previous rune boundary.
 func truncateBytes(s string, maxBytes int) string {
 	if len(s) <= maxBytes {
 		return s
+	}
+	// Back up from maxBytes to avoid splitting a multi-byte rune.
+	for maxBytes > 0 && maxBytes < len(s) && s[maxBytes]>>6 == 0b10 {
+		maxBytes--
 	}
 	return s[:maxBytes]
 }

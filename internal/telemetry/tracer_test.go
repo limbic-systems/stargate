@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/limbic-systems/stargate/internal/config"
+	"github.com/limbic-systems/stargate/internal/ttlmap"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/codes"
@@ -181,37 +182,26 @@ func TestStartFeedbackSpan_WithoutLink(t *testing.T) {
 }
 
 func TestToolUseTraceMap_StoreAndLookup(t *testing.T) {
-	cfg := config.TelemetryConfig{
-		Enabled:      true,
-		Endpoint:     "https://localhost:4318",
-		ExportTraces: true,
+	// Use a LiveTelemetry with only the traceMap — no OTLP exporters needed.
+	lt := &LiveTelemetry{
+		traceMap: ttlmap.New[string, string](context.Background(), ttlmap.Options{MaxEntries: 100}),
 	}
-	tel, err := Init(cfg)
-	if err != nil {
-		t.Fatalf("Init: %v", err)
-	}
-	defer tel.Shutdown(context.Background())
+	t.Cleanup(func() { lt.traceMap.Close() })
 
-	tel.StoreToolUseTrace("toolu_001", "abc123def456")
-	got := tel.LookupToolUseTrace("toolu_001")
+	lt.StoreToolUseTrace("toolu_001", "abc123def456")
+	got := lt.LookupToolUseTrace("toolu_001")
 	if got != "abc123def456" {
 		t.Errorf("LookupToolUseTrace: got %q, want %q", got, "abc123def456")
 	}
 }
 
 func TestToolUseTraceMap_MissReturnsEmpty(t *testing.T) {
-	cfg := config.TelemetryConfig{
-		Enabled:      true,
-		Endpoint:     "https://localhost:4318",
-		ExportTraces: true,
+	lt := &LiveTelemetry{
+		traceMap: ttlmap.New[string, string](context.Background(), ttlmap.Options{MaxEntries: 100}),
 	}
-	tel, err := Init(cfg)
-	if err != nil {
-		t.Fatalf("Init: %v", err)
-	}
-	defer tel.Shutdown(context.Background())
+	t.Cleanup(func() { lt.traceMap.Close() })
 
-	got := tel.LookupToolUseTrace("nonexistent")
+	got := lt.LookupToolUseTrace("nonexistent")
 	if got != "" {
 		t.Errorf("LookupToolUseTrace miss: got %q, want empty", got)
 	}

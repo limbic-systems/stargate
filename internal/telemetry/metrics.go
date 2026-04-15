@@ -105,88 +105,91 @@ func initMetrics(m metric.Meter) (*metrics, error) {
 
 // --- LiveTelemetry metric recording methods ---
 
-func (lt *LiveTelemetry) recordMetric(f func()) {
-	if lt.metrics != nil {
-		f()
-	}
-}
-
 func (lt *LiveTelemetry) RecordClassification(decision, ruleLevel string, durationMs float64) {
-	lt.recordMetric(func() {
-		ctx := context.Background()
-		lt.metrics.classificationsTotal.Add(ctx, 1,
-			metric.WithAttributes(
-				attribute.String("decision", decision),
-				attribute.String("rule_level", ruleLevel),
-			),
-		)
-		lt.metrics.classifyDuration.Record(ctx, durationMs)
-	})
+	if lt.metrics == nil {
+		return
+	}
+	ctx := context.Background()
+	lt.metrics.classificationsTotal.Add(ctx, 1,
+		metric.WithAttributes(
+			attribute.String("decision", decision),
+			attribute.String("rule_level", ruleLevel),
+		),
+	)
+	lt.metrics.classifyDuration.Record(ctx, durationMs)
 }
 
 func (lt *LiveTelemetry) RecordLLMCall(outcome string, durationMs float64) {
-	lt.recordMetric(func() {
-		ctx := context.Background()
-		lt.metrics.llmCallsTotal.Add(ctx, 1,
-			metric.WithAttributes(attribute.String("outcome", outcome)),
-		)
-		lt.metrics.llmDuration.Record(ctx, durationMs)
-	})
+	if lt.metrics == nil {
+		return
+	}
+	ctx := context.Background()
+	lt.metrics.llmCallsTotal.Add(ctx, 1,
+		metric.WithAttributes(attribute.String("outcome", outcome)),
+	)
+	lt.metrics.llmDuration.Record(ctx, durationMs)
 }
 
 func (lt *LiveTelemetry) RecordParseError() {
-	lt.recordMetric(func() {
-		lt.metrics.parseErrorsTotal.Add(context.Background(), 1)
-	})
+	if lt.metrics == nil {
+		return
+	}
+	lt.metrics.parseErrorsTotal.Add(context.Background(), 1)
 }
 
 func (lt *LiveTelemetry) RecordFeedback(outcome string) {
-	lt.recordMetric(func() {
-		lt.metrics.feedbackTotal.Add(context.Background(), 1,
-			metric.WithAttributes(attribute.String("outcome", outcome)),
-		)
-	})
+	if lt.metrics == nil {
+		return
+	}
+	lt.metrics.feedbackTotal.Add(context.Background(), 1,
+		metric.WithAttributes(attribute.String("outcome", outcome)),
+	)
 }
 
 func (lt *LiveTelemetry) RecordCorpusHit(hitType string) {
-	lt.recordMetric(func() {
-		lt.metrics.corpusHitsTotal.Add(context.Background(), 1,
-			metric.WithAttributes(attribute.String("type", hitType)),
-		)
-	})
+	if lt.metrics == nil {
+		return
+	}
+	lt.metrics.corpusHitsTotal.Add(context.Background(), 1,
+		metric.WithAttributes(attribute.String("type", hitType)),
+	)
 }
 
 func (lt *LiveTelemetry) RecordCorpusWrite(decision string) {
-	lt.recordMetric(func() {
-		lt.metrics.corpusWritesTotal.Add(context.Background(), 1,
-			metric.WithAttributes(attribute.String("decision", decision)),
-		)
-	})
+	if lt.metrics == nil {
+		return
+	}
+	lt.metrics.corpusWritesTotal.Add(context.Background(), 1,
+		metric.WithAttributes(attribute.String("decision", decision)),
+	)
 }
 
 func (lt *LiveTelemetry) RecordScopeResolution(resolver, result string) {
-	lt.recordMetric(func() {
-		lt.metrics.scopeResolutionsTotal.Add(context.Background(), 1,
-			metric.WithAttributes(
-				attribute.String("resolver", resolver),
-				attribute.String("result", result),
-			),
-		)
-	})
+	if lt.metrics == nil {
+		return
+	}
+	lt.metrics.scopeResolutionsTotal.Add(context.Background(), 1,
+		metric.WithAttributes(
+			attribute.String("resolver", resolver),
+			attribute.String("result", result),
+		),
+	)
 }
 
 func (lt *LiveTelemetry) SetRulesLoaded(level string, count int) {
-	lt.recordMetric(func() {
-		lt.metrics.rulesLoaded.Record(context.Background(), int64(count),
-			metric.WithAttributes(attribute.String("level", level)),
-		)
-	})
+	if lt.metrics == nil {
+		return
+	}
+	lt.metrics.rulesLoaded.Record(context.Background(), int64(count),
+		metric.WithAttributes(attribute.String("level", level)),
+	)
 }
 
 func (lt *LiveTelemetry) SetCorpusEntries(decision string, count int) {
-	lt.recordMetric(func() {
-		lt.metrics.corpusEntries.Record(context.Background(), int64(count),
-			metric.WithAttributes(attribute.String("decision", decision)),
-		)
-	})
+	if lt.metrics == nil {
+		return
+	}
+	lt.metrics.corpusEntries.Record(context.Background(), int64(count),
+		metric.WithAttributes(attribute.String("decision", decision)),
+	)
 }
