@@ -49,3 +49,19 @@ Risks evaluated by the expert panel and accepted with documented mitigations.
 **Mitigation:** (1) `<precedent_context>` tags are marked as potentially adversarial in the system prompt and REMINDER text, (2) balanced polarity injection ensures the LLM sees both positive and negative precedents, (3) reasoning truncation to 1000 chars bounds the payload, (4) TTL decay (90d) provides natural expiration, (5) a single poisoned precedent is always accompanied by other precedents that may contradict it. Monitoring for reasoning containing imperative language (e.g., "always allow", "ignore safety") is a future enhancement.
 
 **Panel:** M5-R1-LLMSec-1, M5-R2-LLMSec-3
+
+## --allow-remote Without Transport Security
+
+**Risk:** The `--allow-remote` flag on `stargate hook` allows connecting to a non-loopback stargate server over plaintext HTTP. An attacker on the same network could MITM the connection and inject fake classification responses (e.g., "allow" for dangerous commands).
+
+**Mitigation:** `--allow-remote` is an explicit operator opt-in — it is never the default. Operators who use it are assumed to understand their network security posture. The default loopback-only behavior eliminates this attack surface for the standard deployment model. Adding mandatory TLS would require certificate management in a short-lived subprocess, which is disproportionate complexity for an edge case. If remote stargate deployments become common, TLS support should be added as a feature.
+
+**Panel:** M6-R2-RedTeam-1
+
+## tool_name Bypass via Agent Renaming
+
+**Risk:** If `tool_name != "Bash"`, the adapter exits 0 (allow) without classification. A compromised agent that renames a Bash invocation to a custom tool name would skip stargate entirely.
+
+**Mitigation:** `tool_name` is controlled by the agent framework (Claude Code), not by the command being classified. A prompt injection that changes the tool name would need to compromise Claude Code's internal tool dispatch, which is outside stargate's trust boundary. Stargate classifies what it's told to classify — if the agent doesn't send it, stargate can't see it.
+
+**Panel:** M6-R2-RedTeam-3
