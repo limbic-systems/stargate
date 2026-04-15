@@ -264,8 +264,6 @@ func (lt *LiveTelemetry) Shutdown(ctx context.Context) error {
 
 // --- LiveTelemetry span and trace methods ---
 
-func (lt *LiveTelemetry) LogClassification(_ context.Context, _ ClassifyResult) {}
-
 func (lt *LiveTelemetry) StartClassifySpan(ctx context.Context) (context.Context, trace.Span) {
 	return lt.tracer.Start(ctx, "stargate.classify")
 }
