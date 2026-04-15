@@ -50,8 +50,8 @@ type postToolUseInput struct {
 
 // HandlePostToolUse reads Claude Code's PostToolUse JSON from stdin,
 // loads the trace file from pre-tool-use, sends feedback, and cleans up.
-// Always returns 0 (fire-and-forget). Errors are silent — post-tool-use
-// must never block the agent.
+// Always returns 0 (fire-and-forget). Errors are non-fatal and may be
+// written to stderr; post-tool-use must never block the agent.
 func HandlePostToolUse(ctx context.Context, stdin io.Reader, stderr io.Writer, cfg ClientConfig) int {
 	input, err := parsePostToolUseInput(stdin)
 	if err != nil {
@@ -183,9 +183,9 @@ func HandlePreToolUse(ctx context.Context, stdin io.Reader, stdout io.Writer, st
 
 	// Store trace for post-tool-use feedback correlation.
 	if err := storeTrace(input.ToolUseID, resp); err != nil {
-		// Trace write failure is non-fatal — classification still valid.
-		// Feedback correlation will fail but the command decision is correct.
-		_ = err
+		// Non-fatal — classification still valid, but feedback correlation
+		// will fail. Log so operators can diagnose filesystem issues.
+		fmt.Fprintf(stderr, "adapter: store trace: %v\n", err)
 	}
 
 	// Map action to permission decision and write response.

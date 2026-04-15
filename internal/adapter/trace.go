@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -149,7 +150,9 @@ func DeleteTrace(dir, toolUseID string) error {
 	return nil
 }
 
-// CleanupOrphans removes regular files older than maxAge in dir.
+// CleanupOrphans removes trace files older than maxAge in dir.
+// Only deletes .json files whose basename (sans extension) passes
+// ValidateToolUseID — non-trace files are left untouched.
 // Uses os.Lstat (not os.Stat) — skips symlinks and non-regular files.
 func CleanupOrphans(dir string, maxAge time.Duration) error {
 	entries, err := os.ReadDir(dir)
@@ -159,8 +162,19 @@ func CleanupOrphans(dir string, maxAge time.Duration) error {
 
 	cutoff := time.Now().Add(-maxAge)
 	for _, entry := range entries {
+		name := entry.Name()
+
+		// Only consider files matching the trace naming scheme: <tool_use_id>.json
+		if filepath.Ext(name) != ".json" {
+			continue
+		}
+		base := strings.TrimSuffix(name, ".json")
+		if ValidateToolUseID(base) != nil {
+			continue
+		}
+
 		// Use Lstat to avoid following symlinks.
-		path := filepath.Join(dir, entry.Name())
+		path := filepath.Join(dir, name)
 		info, err := os.Lstat(path)
 		if err != nil {
 			// File may have been removed between ReadDir and Lstat; skip.

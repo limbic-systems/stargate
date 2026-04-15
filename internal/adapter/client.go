@@ -54,17 +54,26 @@ type FeedbackRequest struct {
 	Context       map[string]any `json:"context,omitempty"`
 }
 
-// ValidateURL checks that the URL host is a loopback address (127.0.0.1, ::1)
-// unless AllowRemote is set. Returns error for non-loopback URLs.
-// "localhost" is explicitly rejected because DNS resolution could point elsewhere.
+// ValidateURL checks that the URL is well-formed and uses http or https.
+// Unless AllowRemote is set, the host must also be a literal loopback address
+// (127.0.0.1 or ::1). "localhost" is explicitly rejected because DNS
+// resolution could point elsewhere.
 func (c ClientConfig) ValidateURL() error {
-	if c.AllowRemote {
-		return nil
-	}
-
 	u, err := url.Parse(c.URL)
 	if err != nil {
 		return fmt.Errorf("adapter: invalid URL %q: %w", c.URL, err)
+	}
+
+	// Validate scheme and host are present.
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("adapter: URL scheme must be http or https, got %q", u.Scheme)
+	}
+	if u.Hostname() == "" {
+		return fmt.Errorf("adapter: URL %q has no host", c.URL)
+	}
+
+	if c.AllowRemote {
+		return nil
 	}
 
 	// Extract the hostname without port. url.Hostname() handles both
