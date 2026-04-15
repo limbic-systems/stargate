@@ -79,7 +79,9 @@ func HandlePostToolUse(ctx context.Context, stdin io.Reader, stderr io.Writer, c
 
 	// No feedback token means feedback would fail; clean up and exit.
 	if trace.FeedbackToken == "" {
-		_ = DeleteTrace(dir, input.ToolUseID)
+		if err := DeleteTrace(dir, input.ToolUseID); err != nil {
+			fmt.Fprintf(stderr, "adapter: post-tool-use: delete trace: %v\n", err)
+		}
 		return 0
 	}
 
@@ -102,7 +104,9 @@ func HandlePostToolUse(ctx context.Context, stdin io.Reader, stderr io.Writer, c
 	}
 
 	// Successful feedback — delete trace file.
-	_ = DeleteTrace(dir, input.ToolUseID)
+	if err := DeleteTrace(dir, input.ToolUseID); err != nil {
+		fmt.Fprintf(stderr, "adapter: post-tool-use: delete trace: %v\n", err)
+	}
 	return 0
 }
 

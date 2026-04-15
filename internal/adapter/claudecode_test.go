@@ -380,7 +380,10 @@ func TestHandlePostToolUse_Success(t *testing.T) {
 	}
 
 	// Trace file should be deleted on successful feedback.
-	dir, _ := adapter.TraceDir()
+	dir, dirErr := adapter.TraceDir()
+	if dirErr != nil {
+		t.Fatalf("TraceDir: %v", dirErr)
+	}
 	_, err := adapter.ReadTrace(dir, toolUseID)
 	if err == nil {
 		t.Error("expected trace file to be deleted after successful feedback")

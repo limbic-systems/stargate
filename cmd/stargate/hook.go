@@ -167,5 +167,9 @@ func parseHookFlags(args []string) (agent, event, url string, timeout time.Durat
 		return "", "", "", 0, false, fmt.Errorf("--agent is required")
 	}
 
+	if timeout <= 0 {
+		return "", "", "", 0, false, fmt.Errorf("--timeout must be positive, got %v", timeout)
+	}
+
 	return agent, event, url, timeout, allowRemote, nil
 }
