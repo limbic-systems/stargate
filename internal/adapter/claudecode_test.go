@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -313,21 +314,144 @@ func TestHandlePreToolUse_TraceFileWritten(t *testing.T) {
 	}
 }
 
-func TestMapActionToDecision(t *testing.T) {
-	tests := []struct {
-		action string
-		want   string
-	}{
-		{"allow", "allow"},
-		{"review", "ask"},
-		{"block", "deny"},
-		{"", "deny"},
-		{"unknown", "deny"},
-		{"ALLOW", "deny"}, // case-sensitive
+// --- PostToolUse tests ---
+
+func makePostToolUseInput(toolUseID string) string {
+	input := map[string]any{
+		"tool_name":   "Bash",
+		"tool_use_id": toolUseID,
+		"session_id":  "sess-test",
 	}
-	for _, tt := range tests {
-		// mapActionToDecision is tested indirectly via HandlePreToolUse.
-		// This documents the mapping expectations.
-		_ = tt
+	data, _ := json.Marshal(input)
+	return string(data)
+}
+
+func feedbackServer(t *testing.T, wantStatus int) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(wantStatus)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func writeTestTrace(t *testing.T, toolUseID, traceID, token string) string {
+	t.Helper()
+	dir, err := adapter.TraceDir()
+	if err != nil {
+		t.Fatalf("TraceDir: %v", err)
+	}
+	err = adapter.WriteTrace(dir, adapter.TraceData{
+		StargateTrID:  traceID,
+		FeedbackToken: token,
+		ToolUseID:     toolUseID,
+	})
+	if err != nil {
+		t.Fatalf("WriteTrace: %v", err)
+	}
+	t.Cleanup(func() { adapter.DeleteTrace(dir, toolUseID) })
+	return dir
+}
+
+func TestHandlePostToolUse_Success(t *testing.T) {
+	toolUseID := "toolu_post_ok"
+	writeTestTrace(t, toolUseID, "sg_tr_post", "fb-tok-post")
+
+	srv := feedbackServer(t, http.StatusOK)
+	stdin := strings.NewReader(makePostToolUseInput(toolUseID))
+	var stderr bytes.Buffer
+	cfg := adapter.ClientConfig{URL: srv.URL, Timeout: 5 * time.Second}
+
+	code := adapter.HandlePostToolUse(context.Background(), stdin, &stderr, cfg)
+	if code != 0 {
+		t.Fatalf("exit code: got %d, want 0", code)
+	}
+
+	// Trace file should be deleted on successful feedback.
+	dir, _ := adapter.TraceDir()
+	_, err := adapter.ReadTrace(dir, toolUseID)
+	if err == nil {
+		t.Error("expected trace file to be deleted after successful feedback")
+	}
+}
+
+func TestHandlePostToolUse_MissingTrace(t *testing.T) {
+	srv := feedbackServer(t, http.StatusOK)
+	stdin := strings.NewReader(makePostToolUseInput("toolu_nonexistent"))
+	var stderr bytes.Buffer
+	cfg := adapter.ClientConfig{URL: srv.URL, Timeout: 5 * time.Second}
+
+	code := adapter.HandlePostToolUse(context.Background(), stdin, &stderr, cfg)
+	if code != 0 {
+		t.Fatalf("exit code: got %d, want 0 (fire-and-forget)", code)
+	}
+}
+
+func TestHandlePostToolUse_CorruptedTrace(t *testing.T) {
+	// Write a corrupt file directly.
+	dir, err := adapter.TraceDir()
+	if err != nil {
+		t.Fatalf("TraceDir: %v", err)
+	}
+	toolUseID := "toolu_corrupt"
+	path := dir + "/" + toolUseID + ".json"
+	os.WriteFile(path, []byte("{not json"), 0600)
+	t.Cleanup(func() { os.Remove(path) })
+
+	srv := feedbackServer(t, http.StatusOK)
+	stdin := strings.NewReader(makePostToolUseInput(toolUseID))
+	var stderr bytes.Buffer
+	cfg := adapter.ClientConfig{URL: srv.URL, Timeout: 5 * time.Second}
+
+	code := adapter.HandlePostToolUse(context.Background(), stdin, &stderr, cfg)
+	if code != 0 {
+		t.Fatalf("exit code: got %d, want 0 (fire-and-forget)", code)
+	}
+}
+
+func TestHandlePostToolUse_FeedbackFails_TracePreserved(t *testing.T) {
+	toolUseID := "toolu_post_fail"
+	dir := writeTestTrace(t, toolUseID, "sg_tr_fail", "fb-tok-fail")
+
+	// Server returns 500 → feedback fails.
+	srv := feedbackServer(t, http.StatusInternalServerError)
+	stdin := strings.NewReader(makePostToolUseInput(toolUseID))
+	var stderr bytes.Buffer
+	cfg := adapter.ClientConfig{URL: srv.URL, Timeout: 5 * time.Second}
+
+	code := adapter.HandlePostToolUse(context.Background(), stdin, &stderr, cfg)
+	if code != 0 {
+		t.Fatalf("exit code: got %d, want 0 (fire-and-forget)", code)
+	}
+
+	// Trace file should be preserved on failed feedback.
+	trace, err := adapter.ReadTrace(dir, toolUseID)
+	if err != nil {
+		t.Fatalf("expected trace file to be preserved, got error: %v", err)
+	}
+	if trace.StargateTrID != "sg_tr_fail" {
+		t.Errorf("trace StargateTrID: got %q, want %q", trace.StargateTrID, "sg_tr_fail")
+	}
+}
+
+func TestHandlePostToolUse_InvalidToolUseID(t *testing.T) {
+	stdin := strings.NewReader(makePostToolUseInput("../../etc/evil"))
+	var stderr bytes.Buffer
+	cfg := adapter.ClientConfig{URL: "http://127.0.0.1:0", Timeout: 1 * time.Second}
+
+	code := adapter.HandlePostToolUse(context.Background(), stdin, &stderr, cfg)
+	if code != 0 {
+		t.Fatalf("exit code: got %d, want 0 (fire-and-forget, even for bad IDs)", code)
+	}
+}
+
+func TestHandlePostToolUse_MalformedStdin(t *testing.T) {
+	stdin := strings.NewReader("{bad json")
+	var stderr bytes.Buffer
+	cfg := adapter.ClientConfig{URL: "http://127.0.0.1:0", Timeout: 1 * time.Second}
+
+	code := adapter.HandlePostToolUse(context.Background(), stdin, &stderr, cfg)
+	if code != 0 {
+		t.Fatalf("exit code: got %d, want 0 (fire-and-forget)", code)
 	}
 }

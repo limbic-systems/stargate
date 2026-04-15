@@ -41,6 +41,87 @@ type hookSpecificOutput struct {
 	PermissionDecisionReason string `json:"permissionDecisionReason,omitempty"`
 }
 
+// postToolUseInput is Claude Code's PostToolUse JSON payload from stdin.
+type postToolUseInput struct {
+	ToolName  string `json:"tool_name"`
+	ToolUseID string `json:"tool_use_id"`
+	SessionID string `json:"session_id"`
+}
+
+// HandlePostToolUse reads Claude Code's PostToolUse JSON from stdin,
+// loads the trace file from pre-tool-use, sends feedback, and cleans up.
+// Always returns 0 (fire-and-forget). Errors are silent — post-tool-use
+// must never block the agent.
+func HandlePostToolUse(ctx context.Context, stdin io.Reader, stderr io.Writer, cfg ClientConfig) int {
+	input, err := parsePostToolUseInput(stdin)
+	if err != nil {
+		fmt.Fprintf(stderr, "adapter: post-tool-use: %v\n", err)
+		return 0
+	}
+
+	if err := ValidateToolUseID(input.ToolUseID); err != nil {
+		fmt.Fprintf(stderr, "adapter: post-tool-use: %v\n", err)
+		return 0
+	}
+
+	dir, err := TraceDir()
+	if err != nil {
+		fmt.Fprintf(stderr, "adapter: post-tool-use: %v\n", err)
+		return 0
+	}
+
+	trace, err := ReadTrace(dir, input.ToolUseID)
+	if err != nil {
+		// Missing or corrupted trace file — nothing to do.
+		fmt.Fprintf(stderr, "adapter: post-tool-use: %v\n", err)
+		return 0
+	}
+
+	// Send feedback to stargate server.
+	feedbackReq := FeedbackRequest{
+		StargateTrID:  trace.StargateTrID,
+		ToolUseID:     input.ToolUseID,
+		FeedbackToken: trace.FeedbackToken,
+		Outcome:       "executed",
+		Context: map[string]any{
+			"session_id": input.SessionID,
+			"agent":      "claude-code",
+		},
+	}
+
+	if err := SendFeedback(ctx, cfg, feedbackReq); err != nil {
+		// Feedback failed — preserve trace for orphan cleanup retry window.
+		fmt.Fprintf(stderr, "adapter: post-tool-use: feedback failed: %v\n", err)
+		return 0
+	}
+
+	// Successful feedback — delete trace file.
+	_ = DeleteTrace(dir, input.ToolUseID)
+	return 0
+}
+
+// parsePostToolUseInput reads and validates the PostToolUse JSON from stdin.
+func parsePostToolUseInput(stdin io.Reader) (*postToolUseInput, error) {
+	limited := io.LimitReader(stdin, maxStdinBytes+1)
+	data, err := io.ReadAll(limited)
+	if err != nil {
+		return nil, fmt.Errorf("reading stdin: %w", err)
+	}
+	if len(data) > maxStdinBytes {
+		return nil, fmt.Errorf("stdin exceeds %d bytes", maxStdinBytes)
+	}
+	if len(data) == 0 {
+		return nil, fmt.Errorf("stdin is empty")
+	}
+
+	var input postToolUseInput
+	if err := json.Unmarshal(data, &input); err != nil {
+		return nil, fmt.Errorf("parsing stdin JSON: %w", err)
+	}
+
+	return &input, nil
+}
+
 // HandlePreToolUse reads Claude Code's PreToolUse JSON from stdin,
 // classifies the command via the stargate server, and writes the hook
 // response to stdout. Stores trace data for post-tool-use correlation.
