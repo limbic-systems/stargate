@@ -2158,52 +2158,238 @@ git commit -m "feat(corpus): CLI subcommands (stats, search, inspect, invalidate
 
 ## M6: Agent Adapters + Feedback
 
-Goal: Claude Code adapter with pre-tool-use and post-tool-use event handling.
+Goal: Claude Code adapter with pre-tool-use and post-tool-use event handling. Thin protocol translator — no classification logic. Incorporates all findings from 2 rounds of expert panel review.
 
-### Task 6.1: Adapter interface and Claude Code pre-tool-use
+> **Panel design decisions (pre-implementation):**
+> - STARGATE_URL validated as loopback-only (--allow-remote to override)
+> - tool_use_id validated against ^[a-zA-Z0-9_-]+$ before filesystem use
+> - O_NOFOLLOW on both write AND read of trace files
+> - Orphan cleanup uses Lstat, skips symlinks
+> - Stdin capped at 1MB
+> - Exit 1 never used (fail-open in Claude Code). All errors exit 2 (fail-closed).
+> - Trace file schema: only {stargate_trace_id, feedback_token, tool_use_id}
+> - Hook does NOT load stargate.toml — URL from flags/env only
+> - Trace file preserved on feedback failure (deleted only on success)
+> - Unknown action values fail-closed to deny
+> - hook.go stub must return exit 2 (not exit 1)
+
+### Task 6.1: Trace file management
+
+> Independent utility — no HTTP, no stdin parsing. Can be tested in isolation.
 
 **Files:**
-- Create: `internal/adapter/adapter.go`
+- Create: `internal/adapter/trace.go`
+- Create: `internal/adapter/trace_test.go`
+
+- [ ] **Step 1: Write failing tests**
+
+Test:
+- WriteTrace creates file at expected path with 0600 permissions
+- WriteTrace with O_NOFOLLOW (symlink target → error)
+- ReadTrace reads back written trace (round-trip)
+- ReadTrace with O_NOFOLLOW (symlink → error)
+- ReadTrace on missing file returns specific error (not panic)
+- DeleteTrace removes file
+- DeleteTrace on missing file is no-op (no error)
+- tool_use_id validation: `toolu_01ABC` passes, `../../etc/evil` rejected, empty rejected
+- TraceDir resolution: $XDG_RUNTIME_DIR/stargate if set, else $TMPDIR/stargate-$UID
+- TraceDir created with 0700, verified via Lstat
+- CleanupOrphans: files >5min deleted, files <5min preserved, symlinks skipped
+
+- [ ] **Step 2: Implement trace file management**
+
+```go
+// TraceData is the minimal schema stored between pre and post tool use.
+type TraceData struct {
+    StargateTrID  string `json:"stargate_trace_id"`
+    FeedbackToken string `json:"feedback_token"`
+    ToolUseID     string `json:"tool_use_id"`
+}
+
+// ValidateToolUseID checks the ID is safe for filesystem use.
+// Returns error if it contains path separators, null bytes, or
+// doesn't match ^[a-zA-Z0-9_-]+$.
+func ValidateToolUseID(id string) error
+
+// TraceDir returns the trace directory path, creating it with 0700 if needed.
+// Resolution: $XDG_RUNTIME_DIR/stargate → $TMPDIR/stargate-$UID.
+// Verifies ownership via Lstat after creation.
+func TraceDir() (string, error)
+
+// WriteTrace writes trace data to <dir>/<tool_use_id>.json with O_NOFOLLOW + 0600.
+func WriteTrace(dir string, data TraceData) error
+
+// ReadTrace reads trace data from <dir>/<tool_use_id>.json with O_NOFOLLOW.
+func ReadTrace(dir, toolUseID string) (TraceData, error)
+
+// DeleteTrace removes the trace file. No error if missing.
+func DeleteTrace(dir, toolUseID string) error
+
+// CleanupOrphans removes regular files older than maxAge in dir.
+// Uses Lstat — skips symlinks and non-regular files.
+func CleanupOrphans(dir string, maxAge time.Duration) error
+```
+
+- [ ] **Step 3: Run tests, commit**
+
+```bash
+git commit -m "feat(adapter): trace file management with path validation and symlink safety"
+```
+
+### Task 6.2: HTTP client for classify + feedback
+
+> Independent HTTP client — no stdin parsing, no stdout formatting.
+
+**Files:**
+- Create: `internal/adapter/client.go`
+- Create: `internal/adapter/client_test.go`
+
+- [ ] **Step 1: Write failing tests**
+
+Test (using httptest.NewServer):
+- POST /classify success → returns ClassifyResponse
+- POST /classify server error (500) → returns error
+- POST /classify timeout → returns error
+- POST /classify server unreachable → retry once after 100ms, then error
+- POST /classify malformed response JSON → returns error
+- POST /feedback success → returns nil error
+- POST /feedback server error → returns error (non-fatal, caller handles)
+- URL validation: loopback accepted, non-loopback rejected (without --allow-remote)
+- URL validation: non-loopback accepted with allowRemote=true
+
+- [ ] **Step 2: Implement HTTP client**
+
+```go
+// ClientConfig holds HTTP client settings resolved from flags/env.
+type ClientConfig struct {
+    URL          string        // resolved from --url / STARGATE_URL / default
+    Timeout      time.Duration // resolved from --timeout / default 10s
+    AllowRemote  bool          // --allow-remote flag
+}
+
+// ValidateURL checks the URL host is loopback unless AllowRemote is set.
+func (c ClientConfig) ValidateURL() error
+
+// Classify sends POST /classify and returns the parsed response.
+// Retries once on connection refused (100ms delay).
+func Classify(ctx context.Context, cfg ClientConfig, req ClassifyRequest) (*ClassifyResponse, error)
+
+// SendFeedback sends POST /feedback. Fire-and-forget — caller logs errors.
+func SendFeedback(ctx context.Context, cfg ClientConfig, req FeedbackRequest) error
+```
+
+Note: `ClassifyRequest`/`ClassifyResponse` types are already in `internal/classifier/`. Import them or define adapter-local types to avoid importing the full classifier package. Prefer adapter-local types — the hook is a thin client, not a classifier consumer.
+
+- [ ] **Step 3: Run tests, commit**
+
+```bash
+git commit -m "feat(adapter): HTTP client with loopback validation and retry"
+```
+
+### Task 6.3: Claude Code pre-tool-use adapter
+
+**Files:**
 - Create: `internal/adapter/claudecode.go`
 - Create: `internal/adapter/claudecode_test.go`
 
 - [ ] **Step 1: Write failing tests**
 
-Test: parse Claude Code PreToolUse stdin → extract command, cwd, session_id, tool_use_id. Non-Bash tool_name → allow immediately. Map ClassifyResponse action to permissionDecision. HMAC feedback token persisted to secure temp file.
+Test:
+- Parse valid PreToolUse stdin → correct command, cwd, session_id, tool_use_id extracted
+- tool_name != "Bash" → returns allow immediately (no HTTP call)
+- tool_name == "Bash" → calls Classify, maps action to permissionDecision
+- action=allow → permissionDecision=allow
+- action=review → permissionDecision=ask
+- action=block → permissionDecision=deny
+- Unknown action → permissionDecision=deny (fail-closed)
+- guidance field → systemMessage in output
+- Trace file written with correct schema after classification
+- Malformed stdin JSON → error
+- Missing required fields → error
+- Stdin exceeds 1MB → error
+- Orphan cleanup runs before classification
 
-- [ ] **Step 2: Implement adapter**
+- [ ] **Step 2: Implement pre-tool-use**
 
-`internal/adapter/adapter.go`: `type Adapter interface { HandlePreToolUse(stdin io.Reader, stdout io.Writer) error; HandlePostToolUse(stdin io.Reader) error }`.
+```go
+// HandlePreToolUse reads Claude Code's PreToolUse JSON from stdin,
+// classifies the command via the stargate server, and writes the
+// hook response to stdout. Stores trace data for post-tool-use.
+// Returns exit code (0 or 2).
+func HandlePreToolUse(stdin io.Reader, stdout io.Writer, cfg ClientConfig) int
+```
 
-`internal/adapter/claudecode.go`: Parse stdin JSON, extract fields, build ClassifyRequest, POST to stargate server, translate response to Claude Code hook output. Store `{stargate_trace_id, feedback_token}` to `$XDG_RUNTIME_DIR/stargate/<tool_use_id>.json` (0700 dir, 0600 file, O_NOFOLLOW).
+stdin is wrapped with `io.LimitReader(stdin, 1<<20)` before JSON decode.
 
 - [ ] **Step 3: Run tests, commit**
 
 ```bash
-git add internal/adapter/
-git commit -m "feat(adapter): add Claude Code pre-tool-use adapter"
+git commit -m "feat(adapter): Claude Code pre-tool-use with stdin validation and trace storage"
 ```
 
-### Task 6.2: Claude Code post-tool-use + hook CLI wiring
+### Task 6.4: Claude Code post-tool-use adapter
 
 **Files:**
 - Modify: `internal/adapter/claudecode.go`
 - Modify: `internal/adapter/claudecode_test.go`
-- Modify: `cmd/stargate/main.go`
 
-- [ ] **Step 1: Write failing tests for post-tool-use**
+- [ ] **Step 1: Write failing tests**
 
-Test: reads tool_use_id from PostToolUse stdin, loads trace file, sends POST /feedback with HMAC token, cleans up temp file. Missing trace file → silent exit 0. Fire-and-forget semantics.
+Test:
+- Reads tool_use_id from PostToolUse stdin, loads trace, sends feedback → success
+- Missing trace file → exit 0 (silent, no error)
+- Corrupted trace file → exit 0 (best-effort)
+- Feedback POST fails → exit 0 (fire-and-forget)
+- Trace file deleted only on successful feedback
+- Trace file preserved on failed feedback
+- tool_use_id validation applies on post-tool-use stdin too
 
-- [ ] **Step 2: Implement post-tool-use and wire CLI**
+- [ ] **Step 2: Implement post-tool-use**
 
-Wire `stargate hook --agent claude-code --event pre-tool-use` and `stargate hook --agent claude-code --event post-tool-use` in the CLI. Add orphan cleanup (files > 5 min old).
+```go
+// HandlePostToolUse reads Claude Code's PostToolUse JSON from stdin,
+// loads the trace file from pre-tool-use, sends feedback, and cleans up.
+// Always returns 0 (fire-and-forget). Errors logged to stderr.
+func HandlePostToolUse(stdin io.Reader, cfg ClientConfig) int
+```
 
 - [ ] **Step 3: Run tests, commit**
 
 ```bash
-git add internal/adapter/ cmd/
-git commit -m "feat(adapter): add Claude Code post-tool-use adapter and hook CLI"
+git commit -m "feat(adapter): Claude Code post-tool-use with trace cleanup"
+```
+
+### Task 6.5: Wire hook CLI
+
+**Files:**
+- Modify: `cmd/stargate/hook.go`
+
+- [ ] **Step 1: Implement hook subcommand**
+
+Parse flags: --agent, --event, --url, --timeout, --allow-remote, --verbose.
+Resolve URL: flag → STARGATE_URL env → default.
+Validate URL (loopback check).
+Dispatch to HandlePreToolUse or HandlePostToolUse based on --event.
+Return exit code from handler.
+
+**Input validation in the CLI layer:**
+- --agent must be "claude-code" (only supported agent). Exit 2 for unknown.
+- --event must be "pre-tool-use" or "post-tool-use". Exit 2 for unknown.
+
+**Fix existing stub:** Change `return 1` to `return 2` to match fail-closed semantics.
+
+- [ ] **Step 2: Write tests**
+
+Test:
+- --agent unknown → exit 2
+- --event unknown → exit 2
+- URL resolution order: flag > env > default
+- Non-loopback URL without --allow-remote → exit 2
+
+- [ ] **Step 3: Run tests, commit**
+
+```bash
+git commit -m "feat(hook): wire CLI with flag parsing, URL validation, and event dispatch"
 ```
 
 ---
