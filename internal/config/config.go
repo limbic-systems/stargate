@@ -274,6 +274,9 @@ type RedactedString string
 // via fmt.Sprintf("%v", cfg) or fmt.Sprintf("%+v", parentStruct).
 func (r RedactedString) String() string { return "[REDACTED]" }
 
+// GoString returns "[REDACTED]" to prevent exposure via fmt.Sprintf("%#v", val).
+func (r RedactedString) GoString() string { return "[REDACTED]" }
+
 // TelemetryConfig holds OpenTelemetry export settings.
 type TelemetryConfig struct {
 	Enabled              bool           `toml:"enabled"`
@@ -657,7 +660,8 @@ func (cfg *Config) Validate() error {
 		return fmt.Errorf("config: telemetry.endpoint is required when telemetry is enabled")
 	}
 	if cfg.Telemetry.Enabled && cfg.Telemetry.Endpoint != "" {
-		if !strings.HasPrefix(cfg.Telemetry.Endpoint, "http://") && !strings.HasPrefix(cfg.Telemetry.Endpoint, "https://") {
+		epLower := strings.ToLower(cfg.Telemetry.Endpoint)
+		if !strings.HasPrefix(epLower, "http://") && !strings.HasPrefix(epLower, "https://") {
 			return fmt.Errorf("config: telemetry.endpoint must use http:// or https:// scheme; got %q", cfg.Telemetry.Endpoint)
 		}
 	}
