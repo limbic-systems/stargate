@@ -8,10 +8,38 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/BurntSushi/toml"
 )
+
+// dayDurationRe matches strict "Nd" day format (e.g., "90d", "7d").
+// Precompiled to avoid per-call regex compilation in ParseMaxAge.
+var dayDurationRe = regexp.MustCompile(`^[1-9]\d*d$`)
+
+// ParseMaxAge parses a duration string that may use "Nd" day format.
+// Returns 0 for empty strings.
+func ParseMaxAge(s string) (time.Duration, error) {
+	if s == "" {
+		return 0, nil
+	}
+	// Try standard Go duration first.
+	if d, err := time.ParseDuration(s); err == nil {
+		if d < 0 {
+			return 0, fmt.Errorf("invalid max_age %q: must be non-negative", s)
+		}
+		return d, nil
+	}
+	// Try strict "Nd" format for days (e.g., "90d", "7d").
+	if dayDurationRe.MatchString(s) {
+		days, err := strconv.Atoi(strings.TrimSuffix(s, "d"))
+		if err == nil && days > 0 {
+			return time.Duration(days) * 24 * time.Hour, nil
+		}
+	}
+	return 0, fmt.Errorf("invalid max_age %q (use Go durations like \"1h\" or day-based like \"90d\")", s)
+}
 
 // parseDuration validates that a string is a valid, non-negative Go duration.
 // Empty strings are allowed (treated as unset).
@@ -30,24 +58,16 @@ func parseDuration(field, value string) error {
 }
 
 // parseDayDuration validates non-negative duration strings that may use "d" suffix for days.
-// Supports Go durations (e.g., "1h", "0s") and day-based durations (e.g., "90d", "7d").
-// Day-based values must be positive (>= 1d); use "0s" for zero.
+// Delegates to ParseMaxAge for the actual parsing — single source of truth.
 func parseDayDuration(field, value string) error {
 	if value == "" {
 		return nil
 	}
-	// Try standard Go duration first.
-	if d, err := time.ParseDuration(value); err == nil {
-		if d < 0 {
-			return fmt.Errorf("config: %s: duration must be non-negative; got %q", field, value)
-		}
-		return nil
+	_, err := ParseMaxAge(value)
+	if err != nil {
+		return fmt.Errorf("config: %s: %w", field, err)
 	}
-	// Try strict "Nd" format for days (e.g., "90d", "7d"). Always positive by regex.
-	if matched, _ := regexp.MatchString(`^[1-9]\d*d$`, value); matched {
-		return nil
-	}
-	return fmt.Errorf("config: %s: invalid duration %q (use Go durations like \"1h\" or day-based like \"90d\")", field, value)
+	return nil
 }
 
 // validateRulePattern checks that a rule's regex pattern compiles.
@@ -178,21 +198,72 @@ type ScrubbingConfig struct {
 
 // CorpusConfig holds precedent corpus settings.
 type CorpusConfig struct {
-	Enabled                  bool    `toml:"enabled"`
-	Path                     string  `toml:"path"`
-	MaxPrecedents            int     `toml:"max_precedents"`
-	MinSimilarity            float64 `toml:"min_similarity"`
-	ExactHitMode             string  `toml:"exact_hit_mode"`
-	MaxAge                   string  `toml:"max_age"`
-	MaxEntries               int     `toml:"max_entries"`
-	PruneInterval            string  `toml:"prune_interval"`
-	MaxWritesPerMinute       int     `toml:"max_writes_per_minute"`
-	StoreDecisions           string  `toml:"store_decisions"`
-	StoreReasoning           bool    `toml:"store_reasoning"`
-	MaxReasoningLength       int     `toml:"max_reasoning_length"`
-	StoreRawCommand          bool    `toml:"store_raw_command"`
-	StoreUserApprovals       bool    `toml:"store_user_approvals"`
-	MaxPrecedentsPerDecision int     `toml:"max_precedents_per_decision"`
+	Enabled                *bool   `toml:"enabled"`
+	Path                   string  `toml:"path"`
+	MaxPrecedents          int     `toml:"max_precedents"`  // 0 = use default (5). Not a pointer: 0 is not a useful explicit value (use Enabled=false to disable).
+	MinSimilarity          float64 `toml:"min_similarity"` // 0 = use default (0.7). Not a pointer: 0.0 matches everything, use Enabled=false to disable.
+	MaxAge                 string  `toml:"max_age"`
+	MaxEntries             *int    `toml:"max_entries"`
+	PruneInterval          string  `toml:"prune_interval"`
+	MaxWritesPerMinute     int     `toml:"max_writes_per_minute"`
+	StoreDecisions         string  `toml:"store_decisions"`
+	StoreReasoning         *bool   `toml:"store_reasoning"`
+	MaxReasoningLength     int     `toml:"max_reasoning_length"`
+	StoreRawCommand        *bool   `toml:"store_raw_command"`
+	StoreUserApprovals     *bool   `toml:"store_user_approvals"`
+	MaxPrecedentsPerPolarity int   `toml:"max_precedents_per_polarity"`
+	CommandCacheEnabled    *bool   `toml:"command_cache_enabled"`
+	CommandCacheTTL        string  `toml:"command_cache_ttl"`
+	CommandCacheMaxEntries int     `toml:"command_cache_max_entries"`
+}
+
+// corpusEnabled returns whether the corpus is enabled (defaults to true).
+func (c CorpusConfig) IsEnabled() bool {
+	if c.Enabled == nil {
+		return true
+	}
+	return *c.Enabled
+}
+
+// IsStoreReasoning returns whether reasoning should be stored (defaults to true).
+func (c CorpusConfig) IsStoreReasoning() bool {
+	if c.StoreReasoning == nil {
+		return true
+	}
+	return *c.StoreReasoning
+}
+
+// IsStoreRawCommand returns whether raw commands should be stored (defaults to true).
+func (c CorpusConfig) IsStoreRawCommand() bool {
+	if c.StoreRawCommand == nil {
+		return true
+	}
+	return *c.StoreRawCommand
+}
+
+// IsStoreUserApprovals returns whether user approvals should be stored (defaults to true).
+func (c CorpusConfig) IsStoreUserApprovals() bool {
+	if c.StoreUserApprovals == nil {
+		return true
+	}
+	return *c.StoreUserApprovals
+}
+
+// IsCommandCacheEnabled returns whether the command cache is enabled (defaults to true).
+func (c CorpusConfig) IsCommandCacheEnabled() bool {
+	if c.CommandCacheEnabled == nil {
+		return true
+	}
+	return *c.CommandCacheEnabled
+}
+
+// GetMaxEntries returns the max entries limit. nil (not set) defaults to 10000.
+// 0 means unlimited (per spec: "Set to 0 for unlimited").
+func (c CorpusConfig) GetMaxEntries() int {
+	if c.MaxEntries == nil {
+		return 10000
+	}
+	return *c.MaxEntries
 }
 
 // TelemetryConfig holds OpenTelemetry export settings.
@@ -289,11 +360,35 @@ func applyDefaults(cfg *Config) {
 	if cfg.Corpus.Path == "" {
 		cfg.Corpus.Path = "~/.local/share/stargate/precedents.db"
 	}
+	// MaxPrecedents: 0 means "use default" (5). To disable precedent injection,
+	// set corpus.enabled = false instead of max_precedents = 0.
+	if cfg.Corpus.MaxPrecedents == 0 {
+		cfg.Corpus.MaxPrecedents = 5
+	}
+	// MinSimilarity: 0 means "use default" (0.7). To disable similarity
+	// filtering, set corpus.enabled = false instead of min_similarity = 0.
+	if cfg.Corpus.MinSimilarity == 0 {
+		cfg.Corpus.MinSimilarity = 0.7
+	}
+	if cfg.Corpus.MaxAge == "" {
+		cfg.Corpus.MaxAge = "90d"
+	}
+	// MaxEntries: nil means "use default" (10000). Explicit 0 means unlimited.
+	// No default needed — GetMaxEntries() handles nil → 10000.
+	if cfg.Corpus.PruneInterval == "" {
+		cfg.Corpus.PruneInterval = "1h"
+	}
 	if cfg.Corpus.MaxWritesPerMinute == 0 {
 		cfg.Corpus.MaxWritesPerMinute = 10
 	}
+	if cfg.Corpus.StoreDecisions == "" {
+		cfg.Corpus.StoreDecisions = "all"
+	}
 	if cfg.Corpus.MaxReasoningLength == 0 {
 		cfg.Corpus.MaxReasoningLength = 1000
+	}
+	if cfg.Corpus.MaxPrecedentsPerPolarity == 0 {
+		cfg.Corpus.MaxPrecedentsPerPolarity = 3
 	}
 	if cfg.Wrappers == nil {
 		cfg.Wrappers = DefaultWrappers()
@@ -301,8 +396,11 @@ func applyDefaults(cfg *Config) {
 	if cfg.Commands == nil {
 		cfg.Commands = DefaultCommandFlags()
 	}
-	if cfg.Corpus.ExactHitMode == "" {
-		cfg.Corpus.ExactHitMode = "precedent"
+	if cfg.Corpus.CommandCacheTTL == "" {
+		cfg.Corpus.CommandCacheTTL = "1h"
+	}
+	if cfg.Corpus.CommandCacheMaxEntries == 0 {
+		cfg.Corpus.CommandCacheMaxEntries = 10000
 	}
 }
 
@@ -452,21 +550,17 @@ func (cfg *Config) Validate() error {
 	}
 
 	// --- Corpus ---
-	validExactHitModes := map[string]bool{"": true, "precedent": true, "auto_decide": true}
-	if !validExactHitModes[cfg.Corpus.ExactHitMode] {
-		return fmt.Errorf("config: corpus.exact_hit_mode must be precedent or auto_decide; got %q", cfg.Corpus.ExactHitMode)
-	}
 	if cfg.Corpus.MinSimilarity < 0 || cfg.Corpus.MinSimilarity > 1 {
 		return fmt.Errorf("config: corpus.min_similarity must be between 0.0 and 1.0; got %f", cfg.Corpus.MinSimilarity)
 	}
 	if cfg.Corpus.MaxPrecedents < 0 {
 		return fmt.Errorf("config: corpus.max_precedents must be non-negative; got %d", cfg.Corpus.MaxPrecedents)
 	}
-	if cfg.Corpus.MaxEntries < 0 {
-		return fmt.Errorf("config: corpus.max_entries must be non-negative; got %d", cfg.Corpus.MaxEntries)
+	if cfg.Corpus.MaxEntries != nil && *cfg.Corpus.MaxEntries < 0 {
+		return fmt.Errorf("config: corpus.max_entries must be non-negative; got %d", *cfg.Corpus.MaxEntries)
 	}
-	if cfg.Corpus.MaxPrecedentsPerDecision < 0 {
-		return fmt.Errorf("config: corpus.max_precedents_per_decision must be non-negative; got %d", cfg.Corpus.MaxPrecedentsPerDecision)
+	if cfg.Corpus.MaxPrecedentsPerPolarity < 0 {
+		return fmt.Errorf("config: corpus.max_precedents_per_polarity must be non-negative; got %d", cfg.Corpus.MaxPrecedentsPerPolarity)
 	}
 	if cfg.Corpus.MaxWritesPerMinute < 0 {
 		return fmt.Errorf("config: corpus.max_writes_per_minute must be non-negative; got %d", cfg.Corpus.MaxWritesPerMinute)
@@ -483,6 +577,12 @@ func (cfg *Config) Validate() error {
 	validStoreDecisions := map[string]bool{"": true, "all": true, "allow_only": true, "deny_only": true}
 	if !validStoreDecisions[cfg.Corpus.StoreDecisions] {
 		return fmt.Errorf("config: corpus.store_decisions must be all, allow_only, or deny_only; got %q", cfg.Corpus.StoreDecisions)
+	}
+	if err := parseDuration("corpus.command_cache_ttl", cfg.Corpus.CommandCacheTTL); err != nil {
+		return err
+	}
+	if cfg.Corpus.CommandCacheMaxEntries < 0 {
+		return fmt.Errorf("config: corpus.command_cache_max_entries must be non-negative; got %d", cfg.Corpus.CommandCacheMaxEntries)
 	}
 
 	// --- Scrubbing: validate extra regex patterns compile ---

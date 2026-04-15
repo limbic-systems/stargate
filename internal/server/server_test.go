@@ -13,6 +13,8 @@ import (
 	"github.com/limbic-systems/stargate/internal/server"
 )
 
+func boolPtr(b bool) *bool { return &b }
+
 // testConfig returns a minimal config with representative RED, GREEN, and
 // YELLOW rules sufficient for the classify endpoint tests.
 func testConfig() *config.Config {
@@ -27,6 +29,7 @@ func testConfig() *config.Config {
 			MaxASTDepth:           64,
 			MaxCommandLength:      65536,
 		},
+		Corpus: config.CorpusConfig{Enabled: boolPtr(false)},
 		Rules: config.RulesConfig{
 			Red: []config.Rule{
 				{
@@ -61,6 +64,7 @@ func mustNewServer(t *testing.T, cfg *config.Config) *server.Server {
 	if err != nil {
 		t.Fatalf("server.New: %v", err)
 	}
+	t.Cleanup(func() { srv.Close() })
 	return srv
 }
 
@@ -97,7 +101,6 @@ func TestStubEndpointsReturn501(t *testing.T) {
 	srv := mustNewServer(t, cfg)
 
 	endpoints := []struct{ method, path string }{
-		{"POST", "/feedback"},
 		{"POST", "/reload"},
 		{"POST", "/test"},
 	}
@@ -110,6 +113,40 @@ func TestStubEndpointsReturn501(t *testing.T) {
 				t.Errorf("status = %d, want %d", w.Code, http.StatusNotImplemented)
 			}
 		})
+	}
+}
+
+func TestFeedbackEndpointMissingFields(t *testing.T) {
+	cfg := testConfig()
+	srv := mustNewServer(t, cfg)
+
+	req := httptest.NewRequest("POST", "/feedback", bytes.NewBufferString(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400 for missing fields", w.Code)
+	}
+}
+
+func TestFeedbackEndpointExpiredTrace(t *testing.T) {
+	cfg := testConfig()
+	srv := mustNewServer(t, cfg)
+
+	body := `{"stargate_trace_id":"sg_tr_abc","tool_use_id":"tu_1","outcome":"executed","feedback_token":"deadbeef"}`
+	req := httptest.NewRequest("POST", "/feedback", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200 for expired trace", w.Code)
+	}
+	var resp map[string]string
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp["status"] != "trace_expired" {
+		t.Errorf("status = %q, want trace_expired", resp["status"])
 	}
 }
 
