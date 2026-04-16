@@ -584,8 +584,9 @@ func TestEvasion_GlobInCmdPosition(t *testing.T) {
 
 func TestEvasion_NestedFunctionDef(t *testing.T) {
 	// f() { g() { rm; }; } — nested function; inner rm has InFunction="g".
-	// Note: the function body is a definition, not an invocation — no
-	// command is actually walked until the function is called.
+	// The walker descends into function bodies for conservative static
+	// analysis so definitions containing dangerous commands are flagged
+	// even before the function is invoked.
 	cmds := walk(t, `f() { g() { rm; }; }`)
 	rm := findByName(cmds, "rm")
 	if rm == nil {

@@ -133,8 +133,9 @@ func TestTest_DryRunFieldIgnoredFromJSON(t *testing.T) {
 	}
 }
 
-// TestClassify_UseCacheRejected verifies use_cache sent to /classify returns 400
-// (DisallowUnknownFields rejects it since ClassifyRequest has no such field).
+// TestClassify_UseCacheRejected verifies use_cache sent to /classify returns 400.
+// ClassifyRequest.UseCache has a json:"-" tag, so DisallowUnknownFields
+// treats use_cache as an unknown key and rejects the request.
 func TestClassify_UseCacheRejected(t *testing.T) {
 	srv := mustNewServer(t, testConfig())
 
@@ -178,11 +179,13 @@ func TestTest_UnknownField(t *testing.T) {
 	}
 }
 
-// TestTest_CorpusNotWritten verifies /test does not write to the corpus.
-// We enable the corpus in the config and verify no entries appear after /test.
-// (This test uses a real corpus to detect side-effect leaks.)
-func TestTest_CorpusNotWritten(t *testing.T) {
-	// Use a config with corpus enabled but in a tmp dir.
+// TestTest_CorpusNotWritten_ServerLayer is a shallow end-to-end check that
+// the /test route doesn't report a corpus write in the response. The deeper
+// regression coverage (LLM-mock + real corpus write path would fire in
+// non-dry-run mode) lives in classifier TestDryRun_CorpusNotWrittenWithLLMAllow.
+// Kept here as a smoke test that the HTTP handler doesn't inadvertently
+// clear DryRun before calling Classify.
+func TestTest_CorpusNotWritten_ServerLayer(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := testConfig()
 	trueVal := true
@@ -191,17 +194,11 @@ func TestTest_CorpusNotWritten(t *testing.T) {
 
 	srv := mustNewServer(t, cfg)
 
-	// Send a /test request that would normally trigger corpus write for YELLOW+LLM.
-	// We use curl which is YELLOW with LLMReview=true. With no LLM provider,
-	// it falls through to default behavior but still no corpus write in dry-run.
-	body := `{"command": "curl https://example.com"}`
-	w := postTest(t, srv, body)
+	w := postTest(t, srv, `{"command": "curl https://example.com"}`)
 	if w.Code != http.StatusOK {
 		t.Fatalf("/test status = %d (body=%s)", w.Code, w.Body.String())
 	}
 
-	// If corpus had been written, the response's Corpus field or entry count
-	// would reflect it. Check the response structure.
 	var resp classifier.ClassifyResponse
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)

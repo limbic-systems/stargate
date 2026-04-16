@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/limbic-systems/stargate/internal/classifier"
+	"github.com/limbic-systems/stargate/internal/rules"
 )
 
 // --- parseTestFlags tests ---
@@ -220,9 +221,8 @@ func TestFormatOneLiner_WithRule(t *testing.T) {
 		Decision: "red",
 		Action:   "block",
 		Reason:   "dangerous",
+		Rule:     &rules.MatchedRule{Level: "red", Index: 2, Reason: "dangerous"},
 	}
-	// Can't construct rules.MatchedRule directly without import; use JSON.
-	// Simpler: test without rule first.
 	got := formatOneLiner(resp)
 	if !strings.Contains(got, "RED") {
 		t.Errorf("want uppercase decision: %s", got)
@@ -232,6 +232,9 @@ func TestFormatOneLiner_WithRule(t *testing.T) {
 	}
 	if !strings.Contains(got, "dangerous") {
 		t.Errorf("want reason: %s", got)
+	}
+	if !strings.Contains(got, "rules.red[2]") {
+		t.Errorf("want rule tag 'rules.red[2]': %s", got)
 	}
 }
 

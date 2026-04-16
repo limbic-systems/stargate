@@ -5,6 +5,9 @@ import (
 	"testing"
 
 	"github.com/limbic-systems/stargate/internal/classifier"
+	"github.com/limbic-systems/stargate/internal/config"
+	"github.com/limbic-systems/stargate/internal/corpus"
+	"github.com/limbic-systems/stargate/internal/llm"
 )
 
 // TestDryRun_NoFeedbackTokenForYellow verifies that DryRun=true prevents
@@ -45,6 +48,67 @@ func TestDryRun_YieldsFeedbackTokenWhenNotDryRun(t *testing.T) {
 	if resp.FeedbackToken == nil {
 		t.Error("non-dry-run YELLOW with tool_use_id should produce a FeedbackToken")
 	}
+}
+
+// TestDryRun_CorpusNotWrittenWithLLMAllow verifies that DryRun suppresses
+// corpus writes even on a code path that WOULD write in non-dry-run mode
+// (LLM approves, corpus enabled). Without this test, the happy path of
+// "no LLM provider in tests" could mask a regression where DryRun no
+// longer gates postProcess.
+func TestDryRun_CorpusNotWrittenWithLLMAllow(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	mock := &mockProvider{response: llm.ReviewResponse{
+		Decision:  "allow",
+		Reasoning: "safe API call",
+	}}
+
+	cfg := llmTestConfig()
+	trueVal := true
+	cfg.Corpus = config.CorpusConfig{
+		Enabled: &trueVal,
+		Path:    tmpDir + "/corpus.db",
+	}
+
+	clf, err := classifier.NewWithProvider(cfg, mock)
+	if err != nil {
+		t.Fatalf("NewWithProvider: %v", err)
+	}
+	defer clf.Close() //nolint:errcheck
+
+	// Baseline: non-dry-run should trigger LLM and write to corpus.
+	wet := clf.Classify(context.Background(), classifier.ClassifyRequest{
+		Command: "curl https://api.example.com",
+	})
+	if wet.Action != "allow" {
+		t.Fatalf("baseline expected action=allow, got %q", wet.Action)
+	}
+	if wet.Corpus == nil || !wet.Corpus.EntryWritten {
+		t.Fatalf("non-dry-run should have written to corpus; got Corpus=%+v", wet.Corpus)
+	}
+	if mock.calls != 1 {
+		t.Fatalf("expected 1 LLM call before dry-run, got %d", mock.calls)
+	}
+
+	// Dry-run with a different command so the cache doesn't interfere.
+	dry := clf.Classify(context.Background(), classifier.ClassifyRequest{
+		Command: "curl https://different.example.com",
+		DryRun:  true,
+	})
+	if dry.Action != "allow" {
+		t.Fatalf("dry-run expected action=allow, got %q", dry.Action)
+	}
+	if dry.Corpus != nil && dry.Corpus.EntryWritten {
+		t.Errorf("DryRun must NOT write to corpus; got EntryWritten=true")
+	}
+	if mock.calls != 2 {
+		t.Errorf("expected LLM called once for dry-run (total 2), got %d total", mock.calls)
+	}
+
+	// Sanity: second LLM call was made but produced no corpus entry.
+	// The corpus file itself shouldn't be empty (baseline wrote); we just
+	// assert the dry-run didn't add a second entry via response shape.
+	_ = corpus.ErrDuplicate // keep corpus import referenced
 }
 
 // TestDryRun_DecisionIdenticalToNonDryRun verifies DryRun does not change

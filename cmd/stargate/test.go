@@ -50,7 +50,7 @@ type testFlags struct {
 	readStdin bool
 }
 
-func handleTest(args []string, configPath string, verbose bool) int {
+func handleTest(args []string, configPath string, _ bool) int {
 	f, err := parseTestFlags(args)
 	if err != nil {
 		if err == errShowHelp {
@@ -98,7 +98,6 @@ func handleTest(args []string, configPath string, verbose bool) int {
 	}
 
 	printResponse(os.Stdout, resp, f)
-	_ = verbose // global verbose flag is captured in testFlags.verbose
 	return 0
 }
 
