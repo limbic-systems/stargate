@@ -2404,7 +2404,6 @@ When `telemetry.enabled = false` (the default), the `Telemetry` struct must be a
 - AST depth exceeding `max_ast_depth` → RED.
 - Resolver returns "unresolvable" → rule doesn't match, falls through (likely to YELLOW).
 - LLM timeout/error → YELLOW (ask user).
-- Config load failure on SIGHUP → keep old config, log error.
 - Server error during classification → returns 200 with `action: "block"`.
 - Feedback endpoint failure → non-blocking, best-effort.
 
@@ -2442,7 +2441,7 @@ When `telemetry.enabled = false` (the default), the `Telemetry` struct must be a
 
 - **In-memory maps**: The `tool_use_id -> stargate_trace_id` map uses TTL-based eviction (5 minute TTL). Entries are cleaned up on access (lazy expiration) and by a background sweep goroutine that runs every 30 seconds. This bounds memory usage even if feedback never arrives for some classifications.
 - **SQLite**: WAL mode must be enabled explicitly at database open (`PRAGMA journal_mode=WAL`). Set `PRAGMA busy_timeout = 5000` (5000ms) to handle concurrent access gracefully. Use a single `*sql.DB` connection pool with `SetMaxOpenConns(1)` for write serialization. Read queries can use a separate pool with higher concurrency. All schema migrations run inside a transaction.
-- **Config hot-reload**: The active config is an immutable value behind `atomic.Pointer[Config]`. Each incoming request captures a config snapshot at entry (via `atomic.Pointer.Load()`), ensuring consistent behavior for the duration of that request. `SIGHUP` constructs a new `Config`, validates it fully (including regex compilation), then atomically swaps the pointer. Old config remains valid for in-flight requests that already captured it. If validation fails, the old config is retained and an error is logged.
+- **Config changes require restart**: There is no hot-reload mechanism. The Classifier, rule engine, scrubber, and HMAC secret are all initialized at startup and immutable for the process lifetime. Config changes are applied by stopping and restarting the server. This is a deliberate simplification — hot-reload was evaluated and rejected due to the complexity of atomically swapping the Classifier while preserving the HMAC secret for outstanding feedback tokens.
 - **HMAC server secret**: A 256-bit random key is generated via `crypto/rand` at server startup and held only in memory (never persisted). Used for feedback token generation. Rotates on every restart. On server restart, the secret rotates and all outstanding feedback tokens become invalid. Feedback for pre-restart classifications is silently dropped (`trace_expired`). This is acceptable because feedback is best-effort and the corpus is not dependent on any single approval.
 
 ### 11.4 Recommended Deployment
@@ -2467,7 +2466,7 @@ stargate/
 │       └── main.go              # CLI entry point, subcommand dispatch
 ├── internal/
 │   ├── config/
-│   │   ├── config.go            # TOML parsing, validation, hot-reload
+│   │   ├── config.go            # TOML parsing, validation
 │   │   └── config_test.go
 │   ├── parser/
 │   │   ├── parser.go            # Shell parsing via mvdan.cc/sh
@@ -2510,7 +2509,7 @@ stargate/
 │   │   ├── claudecode.go        # Claude Code pre/post-tool-use adapter
 │   │   └── claudecode_test.go
 │   ├── server/
-│   │   ├── server.go            # HTTP handlers (/classify, /feedback, /health, /reload, /test)
+│   │   ├── server.go            # HTTP handlers (/classify, /feedback, /health, /test)
 │   │   └── server_test.go
 │   └── feedback/
 │       ├── feedback.go          # Feedback processing, trace correlation, corpus update
@@ -2560,7 +2559,6 @@ No CGO. No external C dependencies. Static binary under 20MB.
 ### 14.2 Integration Tests
 
 - **End-to-end HTTP tests**: Start the server, POST commands to `/classify`, assert responses. Include feedback loop tests.
-- **Config reload tests**: Modify TOML file, send SIGHUP, verify new rules take effect.
 - **Scope resolution tests**: End-to-end with real `.git/config` files and scope validation.
 
 ### 14.3 Corpus Testing

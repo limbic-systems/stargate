@@ -148,7 +148,7 @@ The panel is not a rubber stamp. Genuinely reason from each expert's perspective
 ### Directory Map
 
 - `cmd/stargate/` — CLI entry point, subcommand dispatch
-- `internal/config/` — TOML parsing, validation, hot-reload
+- `internal/config/` — TOML parsing, validation
 - `internal/parser/` — Shell parsing, AST walking, CommandInfo extraction
 - `internal/rules/` — Rule compilation and matching
 - `internal/scopes/` — Scope definitions, resolver interface, built-in resolvers
@@ -157,7 +157,7 @@ The panel is not a rubber stamp. Genuinely reason from each expert's perspective
 - `internal/corpus/` — SQLite precedent corpus, structural signatures, similarity search
 - `internal/telemetry/` — OTel SDK init, logs, metrics, traces
 - `internal/adapter/` — Agent-specific hook adapters (Claude Code, etc.)
-- `internal/server/` — HTTP handlers (/classify, /feedback, /health, /reload, /test)
+- `internal/server/` — HTTP handlers (/classify, /feedback, /health, /test)
 - `internal/feedback/` — Feedback processing, trace correlation, corpus update
 - `stargate.toml` — Example/default config
 
