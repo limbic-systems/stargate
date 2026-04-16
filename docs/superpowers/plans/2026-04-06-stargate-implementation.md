@@ -2849,7 +2849,7 @@ Choose A — simpler, single code path. The `DryRun` field is internal-only (not
 
 When `DryRun=true`:
 - Skip `corpus.Write` call
-- Skip command cache update
+- Skip command cache **reads and writes** (operator gets a live result from current rules, not a cached decision — that's the point of /test)
 - Set `FeedbackToken` to nil (no feedback expected)
 - Always populate `ast` field
 - LLM review still runs if triggered (operator wants to see what it would decide)
@@ -2857,7 +2857,10 @@ When `DryRun=true`:
 
 - [ ] **Step 2: Implement handleTest handler**
 
-`POST /test` → same request body as `/classify`. Sets `req.DryRun = true`. Returns same response schema. `ast` always populated. `FeedbackToken` always nil.
+`POST /test` request body extends `/classify` with one optional field:
+- `use_cache` (bool, default false) — when true, allows cache reads (for debugging caching behavior)
+
+Sets `req.DryRun = true`. Returns same response schema. `ast` always populated. `FeedbackToken` always nil.
 
 - [ ] **Step 3: Write tests**
 
@@ -2866,7 +2869,8 @@ Test:
 - `/test` response always includes `ast` field (non-nil)
 - `/test` response has `feedback_token: null`
 - Corpus has no new entries after `/test` (count before and after)
-- Command cache not updated after `/test`
+- Command cache not read or written after `/test` (default)
+- `/test` with `use_cache: true` → cache reads allowed, cache writes still skipped
 - Telemetry spans emitted for `/test` with `stargate.dry_run=true` attribute
 - DryRun field not accepted from HTTP JSON input (test with `{"dry_run": true}` in body → ignored)
 - `/test` shares LLM rate-limit budget with `/classify` (not a separate pool)
@@ -2885,14 +2889,19 @@ git commit -m "feat(server): add POST /test dry-run endpoint"
 
 - [ ] **Step 1: Implement test subcommand**
 
-Parse flags: `--cwd`, `--json`, `--url`, `--timeout`. Accept command as positional arg or from stdin (`-`).
+Parse flags: `--cwd`, `--json`, `--verbose`, `--url`, `--timeout`, `--cached`, `--offline`.
+Accept command as positional arg or from stdin (`-`).
 
 Two modes:
-- **Server mode** (default): POST to `<url>/test` with the command. Requires running server.
-- **Offline mode** (`--offline`): Load config, create a Classifier directly, call ClassifyDryRun. No server needed.
+- **Server mode** (default): POST to `<url>/test` with the command. Sends `use_cache` field when `--cached` is set.
+- **Offline mode** (`--offline`): Load config, override `corpus.enabled = false` to skip SQLite init (avoids failure on unwritable corpus paths), create Classifier directly, call Classify with DryRun=true.
 
-Default output: human-readable one-liner (decision, action, reason, matched rule).
-`--json` output: full ClassifyResponse JSON (indented).
+**Output formats:**
+- **Default**: single line — `RED block — Recursive force delete is high-risk. (rule: dangerous_rm)`
+- **`--verbose`**: adds timing, LLM review summary, corpus precedents, matched rule details
+- **`--json`**: full ClassifyResponse JSON (indented)
+
+**Config path**: uses the standard resolution order (--config → STARGATE_CONFIG → ~/.config/stargate/stargate.toml). No CWD search — the trust anchor is always outside any repo.
 
 - [ ] **Step 2: Write tests**
 
@@ -2900,8 +2909,12 @@ Test:
 - Positional arg → command extracted
 - Stdin (`-`) → command read from stdin
 - `--json` → full JSON output, valid JSON parse
+- `--verbose` → includes timing and LLM fields
+- Default output → single line with decision, action, reason
 - `--cwd` → CWD passed in request
+- `--cached` → use_cache=true sent in /test body
 - Server mode → POST to /test (use httptest.Server)
+- Offline mode → no server needed, corpus init skipped
 - Missing command → error with usage hint
 - `--url` flag → custom server URL
 
@@ -2931,6 +2944,7 @@ Table-driven tests covering all vectors from spec §10.1 plus panel-identified g
 | Brace expansion | `{rm,-rf,/}` | YELLOW | unresolvable_expansion |
 | Quoted braces | `"{rm,-rf,/}"` | Not brace expansion | literal string |
 | Hex/octal escaping | `$'\x72\x6d' -rf /` | RED | Name="rm" (ANSI-C resolved) |
+| Unicode \u escape | `$'\u0072\u006d' -rf /` | RED | Name="rm" (verify \u path) |
 | Variable indirection | `cmd=$'rm'; $cmd -rf /` | YELLOW | unresolvable_expansion |
 | Command substitution | `$(echo rm) -rf /` | YELLOW | InSubstitution=true on inner |
 | Process substitution | `cat <(rm -rf /)` | inner RED | InSubstitution=true |
@@ -2938,19 +2952,24 @@ Table-driven tests covering all vectors from spec §10.1 plus panel-identified g
 | ArithmExp substitution | `echo $(($(rm)))` | inner YELLOW | InSubstitution=true |
 | Redirect operand | `> $(rm -rf /)` | inner YELLOW | InSubstitution=true |
 | for/case header | `for x in $(rm); do echo; done` | inner YELLOW | InSubstitution=true |
+| Array assignment subst | `declare -a arr=($(rm -rf /))` | inner YELLOW | InSubstitution=true, walked via DeclClause |
 | Unicode homoglyphs | `rｍ -rf /` | YELLOW | won't match GREEN rules |
 | Newline injection | `echo ok` + `\n` + `rm -rf /` | RED | Use real newline in test |
 | Pipe obfuscation | `echo x \| rm -rf /` | RED | PipelinePosition=2, Name="rm" |
-| eval wrapper | `eval "rm -rf /"` | YELLOW | dynamic execution |
-| Heredoc substitution | `cat <<EOF\n$(rm -rf /)\nEOF` | inner YELLOW | walked via Hdoc |
-| coproc prefix | `coproc rm -rf /` | RED | Name="rm" |
-| Alias (raw name) | `rm -rf /` | RED | aliases not expanded |
+| eval wrapper | `eval "rm -rf /"` | RED | Name="eval" (RED rule exists for eval) |
+| Heredoc substitution | `cat <<EOF\n$(rm -rf /)\nEOF` | inner YELLOW | Assert outer cat found AND inner rm has InSubstitution=true |
+| coproc prefix | `coproc rm -rf /` | RED | Name="rm" (walker recurses into inner statement) |
+| Alias (raw name) | `rm -rf /` | RED | aliases not expanded by parser |
 
-**Test implementation notes** (from shell expert panel review):
+**Test implementation notes** (from shell expert panel review, 2 rounds):
 - Use real newlines in Go test strings, not `\n` literals
+- Evasion tests call `parser.ParseAndWalk()` directly and assert on `[]CommandInfo` fields
+- Classifier-level tests remain in the classifier package for end-to-end coverage
 - Assert specific `CommandInfo` fields (Name, PipelinePosition, InSubstitution), not just final classification
 - Verify `Name` field equals resolved value (e.g., "rm") for ANSI-C quoting tests
 - Process substitution `<()` / `>()` must set `InSubstitution=true`
+- Heredoc tests: assert both the outer command and the inner substitution command
+- eval: has a RED rule — verify Name="eval", not YELLOW dynamic execution
 
 - [ ] **Step 2: Run tests, fix any gaps in parser/walker**
 

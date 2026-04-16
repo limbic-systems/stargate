@@ -73,3 +73,11 @@ Risks evaluated by the expert panel and accepted with documented mitigations.
 **Mitigation:** An attacker with process environment write access already has local code execution and can read commands directly. The env vars are intended for CI/CD secret injection where the TOML file doesn't contain credentials. A warning-level log is emitted at startup when any override is active. The default is `include_scrubbed_command = false`, so even a redirected endpoint receives no command content without explicit opt-in.
 
 **Panel:** M7-R1-Compliance-4
+
+## POST /test as Classification Oracle
+
+**Risk:** The `/test` endpoint runs the full classification pipeline (including LLM review) without writing to the precedent corpus or generating feedback tokens. An attacker on localhost can probe rule boundaries to map what commands are allowed, blocked, or reviewed — effectively developing evasion strategies without leaving persistent corpus entries.
+
+**Mitigation:** Localhost access is already the trust boundary — anyone who can POST to 127.0.0.1 already has local code execution and can observe classification results directly. All `/test` requests emit telemetry spans with `stargate.dry_run=true` attribute, providing an audit trail for after-the-fact detection of probing patterns. `/test` shares the same LLM rate-limit budget as `/classify`, preventing unbounded LLM cost amplification.
+
+**Panel:** M8-R2-Compliance-1
