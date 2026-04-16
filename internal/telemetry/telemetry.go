@@ -7,8 +7,8 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"log"
 	"net/url"
+	"os"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -138,7 +138,7 @@ func Init(cfg config.TelemetryConfig) (Telemetry, error) {
 	// Warn on http:// with credentials.
 	if cfg.Username != "" || cfg.Password != "" {
 		if u, err := url.Parse(cfg.Endpoint); err == nil && u.Scheme == "http" {
-			log.Printf("telemetry: WARNING: endpoint %q uses http:// with credentials — consider https://", cfg.Endpoint)
+			fmt.Fprintf(os.Stderr, "telemetry: WARNING: endpoint %q uses http:// with credentials — consider https://\n", cfg.Endpoint)
 		}
 	}
 
