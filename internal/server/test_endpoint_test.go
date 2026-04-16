@@ -120,10 +120,10 @@ func TestTest_UseCacheDefault(t *testing.T) {
 	}
 }
 
-// TestTest_DryRunFieldIgnoredFromJSON verifies that sending "dry_run": true
+// TestTest_DryRunFieldRejectedFromJSON verifies that sending "dry_run": true
 // in the JSON body is rejected — the field has json:"-" tag on ClassifyRequest
 // embedded in TestRequest, so DisallowUnknownFields rejects unknown keys.
-func TestTest_DryRunFieldIgnoredFromJSON(t *testing.T) {
+func TestTest_DryRunFieldRejectedFromJSON(t *testing.T) {
 	srv := mustNewServer(t, testConfig())
 
 	// dry_run is not a known field on TestRequest — should be rejected.

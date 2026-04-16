@@ -360,11 +360,17 @@ func (c *Classifier) Classify(ctx context.Context, req ClassifyRequest) *Classif
 
 	finalize := func() *ClassifyResponse {
 		resp.Timing.TotalMs = float64(time.Since(start).Microseconds()) / 1000
-		ruleLevel := "none"
-		if resp.Rule != nil {
-			ruleLevel = resp.Rule.Level
+		// Skip classification metrics for dry-run: /test traffic is a
+		// developer tool and should not inflate production dashboards
+		// (stargate_classifications_total, stargate_classify_duration).
+		// The span still carries stargate.dry_run=true for trace filtering.
+		if !req.DryRun {
+			ruleLevel := "none"
+			if resp.Rule != nil {
+				ruleLevel = resp.Rule.Level
+			}
+			c.tel.RecordClassification(resp.Decision, ruleLevel, resp.Timing.TotalMs)
 		}
-		c.tel.RecordClassification(resp.Decision, ruleLevel, resp.Timing.TotalMs)
 		return resp
 	}
 

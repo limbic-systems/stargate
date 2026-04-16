@@ -6,7 +6,6 @@ import (
 
 	"github.com/limbic-systems/stargate/internal/classifier"
 	"github.com/limbic-systems/stargate/internal/config"
-	"github.com/limbic-systems/stargate/internal/corpus"
 	"github.com/limbic-systems/stargate/internal/llm"
 )
 
@@ -104,11 +103,6 @@ func TestDryRun_CorpusNotWrittenWithLLMAllow(t *testing.T) {
 	if mock.calls != 2 {
 		t.Errorf("expected LLM called once for dry-run (total 2), got %d total", mock.calls)
 	}
-
-	// Sanity: second LLM call was made but produced no corpus entry.
-	// The corpus file itself shouldn't be empty (baseline wrote); we just
-	// assert the dry-run didn't add a second entry via response shape.
-	_ = corpus.ErrDuplicate // keep corpus import referenced
 }
 
 // TestDryRun_DecisionIdenticalToNonDryRun verifies DryRun does not change
