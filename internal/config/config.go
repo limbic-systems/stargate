@@ -671,7 +671,7 @@ func (cfg *Config) Validate() error {
 	}
 	validTelemetryProtocols := map[string]bool{"": true, "http/protobuf": true}
 	if !validTelemetryProtocols[cfg.Telemetry.Protocol] {
-		return fmt.Errorf("config: telemetry.protocol must be http/protobuf; got %q", cfg.Telemetry.Protocol)
+		return fmt.Errorf("config: telemetry.protocol must be http/protobuf (or empty for default); got %q", cfg.Telemetry.Protocol)
 	}
 
 	// --- Log ---

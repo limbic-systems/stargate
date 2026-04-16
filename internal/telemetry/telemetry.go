@@ -132,8 +132,9 @@ func Init(cfg config.TelemetryConfig) (Telemetry, error) {
 		return &NoOpTelemetry{}, nil
 	}
 
-	// Note: STARGATE_OTEL_* env var overrides are resolved in config loading,
-	// not here. The telemetry package receives the final resolved config.
+	// Note: STARGATE_OTEL_* env var overrides are not yet implemented.
+	// When added, they should be resolved in config loading (config.Load),
+	// not here — the telemetry package receives the final resolved config.
 
 	// Warn on http:// with credentials.
 	if cfg.Username != "" || cfg.Password != "" {
