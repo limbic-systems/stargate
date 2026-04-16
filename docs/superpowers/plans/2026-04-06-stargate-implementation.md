@@ -2857,10 +2857,9 @@ When `DryRun=true`:
 
 - [ ] **Step 2: Implement handleTest handler**
 
-`POST /test` request body extends `/classify` with one optional field:
-- `use_cache` (bool, default false) — when true, allows cache reads (for debugging caching behavior)
+Define a `TestRequest` struct that embeds `ClassifyRequest` and adds `UseCache bool json:"use_cache"`. The `/test` handler decodes into `TestRequest`, extracts the `ClassifyRequest`, sets `DryRun=true`, and passes `UseCache` through. This keeps `use_cache` off the `/classify` schema (which uses `DisallowUnknownFields`).
 
-Sets `req.DryRun = true`. Returns same response schema. `ast` always populated. `FeedbackToken` always nil.
+Returns same response schema as `/classify`. `ast` always populated. `FeedbackToken` always nil.
 
 - [ ] **Step 3: Write tests**
 
@@ -2873,7 +2872,8 @@ Test:
 - `/test` with `use_cache: true` → cache reads allowed, cache writes still skipped
 - Telemetry spans emitted for `/test` with `stargate.dry_run=true` attribute
 - DryRun field not accepted from HTTP JSON input (test with `{"dry_run": true}` in body → ignored)
-- `/test` shares LLM rate-limit budget with `/classify` (not a separate pool)
+- `use_cache` sent to `/classify` → 400 (DisallowUnknownFields rejects it)
+- `/test` shares LLM rate-limit budget with `/classify` (same `llmProvider` instance, not a separate pool)
 
 - [ ] **Step 4: Commit**
 
@@ -2894,7 +2894,7 @@ Accept command as positional arg or from stdin (`-`).
 
 Two modes:
 - **Server mode** (default): POST to `<url>/test` with the command. Sends `use_cache` field when `--cached` is set.
-- **Offline mode** (`--offline`): Load config, override `corpus.enabled = false` to skip SQLite init (avoids failure on unwritable corpus paths), create Classifier directly, call Classify with DryRun=true.
+- **Offline mode** (`--offline`): Load config, override `corpus.enabled = false` to skip SQLite init (avoids failure on unwritable corpus paths), create Classifier directly, call Classify with DryRun=true. All other security layers (rules, scopes, resolvers, scrubber) initialize identically to server mode — only corpus is disabled.
 
 **Output formats:**
 - **Default**: single line — `RED block — Recursive force delete is high-risk. (rule: dangerous_rm)`
@@ -2915,6 +2915,7 @@ Test:
 - `--cached` → use_cache=true sent in /test body
 - Server mode → POST to /test (use httptest.Server)
 - Offline mode → no server needed, corpus init skipped
+- Offline mode with corpus=nil → no panic on any code path (explicit nil-safety test)
 - Missing command → error with usage hint
 - `--url` flag → custom server URL
 
@@ -2961,7 +2962,7 @@ Table-driven tests covering all vectors from spec §10.1 plus panel-identified g
 | coproc prefix | `coproc rm -rf /` | RED | Name="rm" (walker recurses into inner statement) |
 | Alias (raw name) | `rm -rf /` | RED | aliases not expanded by parser |
 
-**Test implementation notes** (from shell expert panel review, 2 rounds):
+**Test implementation notes** (from shell expert panel review, 3 rounds):
 - Use real newlines in Go test strings, not `\n` literals
 - Evasion tests call `parser.ParseAndWalk()` directly and assert on `[]CommandInfo` fields
 - Classifier-level tests remain in the classifier package for end-to-end coverage
@@ -2970,6 +2971,10 @@ Table-driven tests covering all vectors from spec §10.1 plus panel-identified g
 - Process substitution `<()` / `>()` must set `InSubstitution=true`
 - Heredoc tests: assert both the outer command and the inner substitution command
 - eval: has a RED rule — verify Name="eval", not YELLOW dynamic execution
+
+**Walker bugs to fix in Step 2** (discovered by panel, confirmed against code):
+1. **ANSI-C `$'...'` not decoded:** `wordLiteral` in walker.go returns raw `p.Value` for `*syntax.SglQuoted` without checking `p.Dollar`. When `Dollar=true`, value contains raw escape sequences (`\x72\x6d`), not decoded bytes (`rm`). Fix: decode ANSI-C escapes when `p.Dollar == true`. Affects hex/octal and Unicode \u test rows.
+2. **Array assignment `a.Array` not walked:** `DeclClause` handler only walks `a.Value` (scalar RHS), misses `a.Array` (`*syntax.ArrayExpr`) for array assignments like `declare -a arr=($(rm))`. Fix: iterate `a.Array.Elems` and walk each element's `Value` word parts.
 
 - [ ] **Step 2: Run tests, fix any gaps in parser/walker**
 
