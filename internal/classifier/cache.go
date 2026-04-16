@@ -62,8 +62,7 @@ func (cc *CommandCache) Store(rawCommand, cwd, decision, action string) {
 	cc.m.Set(cacheKey(rawCommand, cwd), CachedDecision{Decision: decision, Action: action}, cc.ttl)
 }
 
-// Clear empties the cache. Intended for config reload (SIGHUP), which
-// is implemented in M8 (Hardening). Currently not called automatically.
+// Clear empties the cache. Can be used for testing or manual cache invalidation.
 func (cc *CommandCache) Clear() {
 	if cc.m == nil {
 		return

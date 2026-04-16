@@ -273,7 +273,7 @@ go test ./internal/server/ -v
 
 - [ ] **Step 3: Implement server**
 
-Create `internal/server/server.go`: a `Server` struct wrapping `http.ServeMux`, holding a reference to `*config.Config` via `atomic.Pointer`. Register `GET /health` handler returning JSON with `status`, `version`, `uptime_seconds`, `config_loaded_at`, and rule counts. Implement `ServeHTTP` to delegate to the mux. Add stub handlers for `POST /classify`, `POST /feedback`, `POST /reload`, `POST /test` that return 501 Not Implemented.
+Create `internal/server/server.go`: a `Server` struct wrapping `http.ServeMux`, holding a reference to `*config.Config` via `atomic.Pointer`. Register `GET /health` handler returning JSON with `status`, `version`, `uptime_seconds`, `config_loaded_at`, and rule counts. Implement `ServeHTTP` to delegate to the mux. Add stub handlers for `POST /classify`, `POST /feedback`, `POST /test` that return 501 Not Implemented.
 
 - [ ] **Step 4: Run tests**
 
@@ -2058,7 +2058,7 @@ Test: cache miss returns false. After classification, same command is a cache hi
 - Config: `command_cache_enabled`, `command_cache_ttl`, `command_cache_max_entries`
 - `Lookup(rawCommand, cwd string) (CachedDecision, bool)`
 - `Store(rawCommand, cwd, decision, action string)`
-- `Clear()` — called on config reload (SIGHUP)
+- `Clear()` — for testing or manual cache invalidation
 
 - [ ] **Step 3: Run tests, commit**
 
@@ -2483,7 +2483,7 @@ Goal: OTel SDK init, structured logs, metrics, traces, Grafana Cloud export. No-
 > - No-op struct with compile-time interface assertion; StartSpan returns noop.Span, never nil
 > - `stargate.scrubbed_command` attribute uses post-scrubbing value, never raw input
 > - `stargate_uptime_seconds` gauge dropped (derivable from process metadata)
-> - `stargate_config_last_reload_timestamp_seconds` gauge added (implemented in M8)
+> - `stargate_uptime_seconds` gauge dropped (derivable from process metadata)
 > - `stargate.response` span dropped (sub-microsecond, no debugging value)
 > - HTTP handler wrapped with `otelhttp.NewHandler` for standard HTTP spans
 > - `ClassifyResult` type defined in telemetry package (avoids circular import with classifier)
@@ -2548,12 +2548,9 @@ Goal: OTel SDK init, structured logs, metrics, traces, Grafana Cloud export. No-
 >
 > **Cross-milestone lesson integration for M8:**
 > - M1: Underspecified design → long tails. M8 tasks need explicit test matrices.
-> - M5: Config defaults collisions. M8 hot-reload needs atomic swap semantics specified.
-> - M6: Error visibility. M8 SIGHUP handler must log all error paths to stderr.
-> - M7: OTel SDK contracts. M8 wires telemetry metrics (config_reloads_total,
->   config_last_reload_timestamp_seconds) — specify exact metric recording calls.
-> - M7: Comment accuracy. M8 plan should specify what POST /reload returns on
->   success and failure (status codes, response bodies).
+> - M6: Error visibility. All error paths log to stderr.
+> - M7: OTel SDK contracts. /test spans include dry_run attribute.
+> - M7: Comment accuracy. Pre-document design decisions inline.
 > - M7: Recurring pushbacks. Pre-document design decisions as inline comments
 >   in code that Copilot tends to question.
 
@@ -2648,7 +2645,7 @@ Histogram instrument names omit unit suffix (OTel unit field appends it for Prom
 - `stargate_parse_duration` (ms): 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5
 - `stargate_llm_duration` (ms): 50, 100, 250, 500, 1000, 2000, 5000, 10000
 
-Gauges: `stargate_rules_loaded`, `stargate_corpus_entries`. `stargate_config_last_reload_timestamp_seconds` defined but implemented in M8.
+Gauges: `stargate_rules_loaded`, `stargate_corpus_entries`.
 
 Recording methods: `RecordClassification`, `RecordLLMCall`, `RecordParseError`, `RecordFeedback`, `RecordCorpusHit`, `RecordCorpusWrite`, `RecordScopeResolution`, `SetRulesLoaded`, `SetCorpusEntries`.
 
@@ -2737,7 +2734,6 @@ When feedback arrives, create a new root span `stargate.feedback`. Set `trace.Li
 **Implementation notes:**
 - `stargate.scope.resolved` truncation must use byte length (`s[:256]`), not rune count
 - `otelhttp.NewHandler` needs explicit route names per handler, or set `http.route` attribute manually
-- `stargate_config_last_reload_timestamp_seconds` uses unit `"s"` (epoch seconds), not `"ms"`
 - `telemetry.endpoint` should be validated for `http://` or `https://` scheme in `Validate()`
 
 - [ ] **Step 4: Write tests**
@@ -2797,75 +2793,22 @@ git commit -m "feat(telemetry): wire OTel into classify, feedback, and server pi
 
 ## M8: Hardening
 
-Goal: Config hot-reload, graceful shutdown, /test endpoint, evasion corpus.
+Goal: `/test` dry-run endpoint, `stargate test` CLI, evasion test corpus.
 
+> **Design decision: Hot-reload removed.** M8 panel review identified two HIGH-severity
+> issues with hot-reload: (1) atomic.Pointer[Config] is insufficient — must rebuild entire
+> Classifier to get new rules/engine, (2) Classifier rebuild regenerates HMAC secret,
+> invalidating outstanding feedback tokens. The complexity is disproportionate for a
+> localhost process that restarts in milliseconds. POST /reload route and SIGHUP handler
+> removed. Config changes require server restart.
+>
 > **Cross-milestone lessons applied:**
-> - M1: Explicit test matrices for every task (prevents underspecified review tails)
-> - M5: Atomic swap semantics for hot-reload specified upfront
-> - M6: All error paths log to stderr with actionable messages
-> - M7: Telemetry metric recording calls specified exactly (config_reloads_total, config_last_reload_timestamp_seconds)
-> - M7: Comment/code accuracy — POST /reload response schema specified in plan
-> - M7: Pre-document design decisions inline to prevent Copilot cycles
+> - M1: Explicit test matrices for every task
+> - M6: All error paths log to stderr
+> - M7: Comment/code accuracy — pre-document design decisions inline
+> - M7: Pre-document pushback-worthy decisions to prevent Copilot cycles
 
-### Task 8.1: Config hot-reload via SIGHUP and POST /reload
-
-**Files:**
-- Modify: `internal/server/server.go` (add handleReload, Reload method)
-- Modify: `cmd/stargate/serve.go` (add SIGHUP handler)
-- Create: `internal/server/reload_test.go`
-
-- [ ] **Step 1: Implement Server.Reload method**
-
-```go
-func (s *Server) Reload() error
-```
-
-Reload semantics (per spec):
-1. Load config from original path (stored at server creation)
-2. Validate via `Config.Validate()` — failure keeps old config, returns error
-3. Recompile rules via `rules.NewEngine(newCfg)` — failure keeps old config
-4. Atomically swap via `s.cfg.Store(newCfg)`
-5. Invalidate command cache (call `s.clf.InvalidateCache()` or rebuild classifier)
-6. Record `stargate_config_reloads_total{status="success"}` or `{status="failure"}`
-7. Record `stargate_config_last_reload_timestamp_seconds` (Unix epoch)
-8. Log to stderr: success with rule counts, or failure with error
-
-**What is NOT reloaded** (inline comment in code to prevent Copilot cycles):
-- LLM provider (API keys read once at startup)
-- Corpus database path
-- Listen address
-- Telemetry configuration
-
-- [ ] **Step 2: Implement handleReload HTTP handler**
-
-`POST /reload` → calls `s.Reload()` → returns JSON response:
-- Success: `200 {"status": "ok", "rules_loaded": {"red": N, "yellow": N, "green": N}}`
-- Validation failure: `400 {"error": "validation: ...", "status": "rejected"}`
-- Load failure: `500 {"error": "load: ...", "status": "failed"}`
-
-- [ ] **Step 3: Wire SIGHUP in serve.go**
-
-Add `syscall.SIGHUP` to signal.Notify. On SIGHUP, call `srv.Reload()`. Log result to stderr. Do NOT exit — continue serving.
-
-- [ ] **Step 4: Write tests**
-
-Test:
-- Reload with valid new config → rules updated, metric incremented with status=success
-- Reload with invalid config → old rules preserved, error returned, status=failure
-- Reload with missing file → old rules preserved, error returned
-- POST /reload returns correct response codes and JSON schema
-- POST /reload with invalid config returns 400
-- Command cache invalidated after successful reload
-- SIGHUP handler calls Reload (test with signal in subprocess)
-- Concurrent classify during reload → no panic, consistent results
-
-- [ ] **Step 5: Commit**
-
-```bash
-git commit -m "feat(server): config hot-reload via SIGHUP and POST /reload"
-```
-
-### Task 8.2: POST /test dry-run endpoint
+### Task 8.1: POST /test dry-run endpoint
 
 **Files:**
 - Modify: `internal/server/server.go` (add handleTest)
@@ -2878,7 +2821,15 @@ Options:
 - A) Add `DryRun bool` field to `ClassifyRequest`, skip corpus write + cache + feedback token when true
 - B) Add a separate `ClassifyDryRun` method that wraps `Classify` and nullifies side effects
 
-Choose A — simpler, single code path. The `DryRun` field is internal-only (not in the HTTP request JSON).
+Choose A — simpler, single code path. The `DryRun` field is internal-only (not in the HTTP request JSON — use `json:"-"` tag). Add inline comment explaining the design choice to prevent Copilot questioning.
+
+When `DryRun=true`:
+- Skip `corpus.Write` call
+- Skip command cache update
+- Set `FeedbackToken` to nil (no feedback expected)
+- Always populate `ast` field
+- LLM review still runs if triggered (operator wants to see what it would decide)
+- Telemetry spans include `stargate.dry_run=true` attribute (so operators can filter /test traffic)
 
 - [ ] **Step 2: Implement handleTest handler**
 
@@ -2892,7 +2843,9 @@ Test:
 - `/test` response has `feedback_token: null`
 - Corpus has no new entries after `/test` (count before and after)
 - Command cache not updated after `/test`
-- Telemetry spans emitted for `/test` (verify span exists, no corpus write span)
+- Telemetry spans emitted for `/test` with `stargate.dry_run=true` attribute
+- DryRun field not accepted from HTTP JSON input (test with `{"dry_run": true}` in body → ignored)
+- `/test` shares LLM rate-limit budget with `/classify` (not a separate pool)
 
 - [ ] **Step 4: Commit**
 
@@ -2900,7 +2853,7 @@ Test:
 git commit -m "feat(server): add POST /test dry-run endpoint"
 ```
 
-### Task 8.3: `stargate test` CLI subcommand
+### Task 8.2: `stargate test` CLI subcommand
 
 **Files:**
 - Modify: `cmd/stargate/test.go` (replace stub)
@@ -2934,30 +2887,46 @@ Test:
 git commit -m "feat: implement stargate test CLI subcommand"
 ```
 
-### Task 8.4: Evasion test corpus expansion
+### Task 8.3: Evasion test corpus expansion
 
 **Files:**
 - Create or modify: `internal/classifier/evasion_test.go`
 
 - [ ] **Step 1: Expand evasion test matrix**
 
-Table-driven tests covering all vectors from spec §10.1:
+Table-driven tests covering all vectors from spec §10.1 plus panel-identified gaps:
 
-| Category | Example | Expected |
-|----------|---------|----------|
-| Backslash escaping | `\rm -rf /` | RED (rm resolved) |
-| Quoting | `'rm' -rf /` | RED (rm resolved) |
-| command prefix | `command rm -rf /` | RED (wrapper stripped) |
-| env prefix | `env rm -rf /` | RED (wrapper stripped) |
-| sudo prefix | `sudo rm -rf /` | RED (wrapper stripped) |
-| Nested prefixes | `sudo env nice rm -rf /` | RED (all wrappers stripped) |
-| Brace expansion | `{rm,-rf,/}` | YELLOW (unresolvable) |
-| Hex/octal escaping | `$'\x72\x6d' -rf /` | RED (ANSI-C resolved) |
-| Variable indirection | `cmd=$'rm'; $cmd -rf /` | YELLOW (unresolvable) |
-| Command substitution | `$(echo rm) -rf /` | YELLOW (dynamic name) |
-| Unicode homoglyphs | `rｍ -rf /` | YELLOW (won't match GREEN) |
-| Newline injection | `echo ok\nrm -rf /` | RED (second statement caught) |
-| Pipe obfuscation | `echo x \| rm -rf /` | RED (rm in pipeline) |
+| Category | Example | Expected | Assert |
+|----------|---------|----------|--------|
+| Backslash escaping | `\rm -rf /` | RED | Name="rm" |
+| Quoting | `'rm' -rf /` | RED | Name="rm" |
+| command prefix | `command rm -rf /` | RED | Name="rm" (wrapper stripped) |
+| env prefix | `env rm -rf /` | RED | Name="rm" |
+| sudo prefix | `sudo rm -rf /` | RED | Name="rm" |
+| Nested prefixes | `sudo env nice rm -rf /` | RED | Name="rm" |
+| Brace expansion | `{rm,-rf,/}` | YELLOW | unresolvable_expansion |
+| Quoted braces | `"{rm,-rf,/}"` | Not brace expansion | literal string |
+| Hex/octal escaping | `$'\x72\x6d' -rf /` | RED | Name="rm" (ANSI-C resolved) |
+| Variable indirection | `cmd=$'rm'; $cmd -rf /` | YELLOW | unresolvable_expansion |
+| Command substitution | `$(echo rm) -rf /` | YELLOW | InSubstitution=true on inner |
+| Process substitution | `cat <(rm -rf /)` | inner RED | InSubstitution=true |
+| ParamExp substitution | `${x:-$(rm -rf /)}` | inner YELLOW | InSubstitution=true |
+| ArithmExp substitution | `echo $(($(rm)))` | inner YELLOW | InSubstitution=true |
+| Redirect operand | `> $(rm -rf /)` | inner YELLOW | InSubstitution=true |
+| for/case header | `for x in $(rm); do echo; done` | inner YELLOW | InSubstitution=true |
+| Unicode homoglyphs | `rｍ -rf /` | YELLOW | won't match GREEN rules |
+| Newline injection | `echo ok` + `\n` + `rm -rf /` | RED | Use real newline in test |
+| Pipe obfuscation | `echo x \| rm -rf /` | RED | PipelinePosition=2, Name="rm" |
+| eval wrapper | `eval "rm -rf /"` | YELLOW | dynamic execution |
+| Heredoc substitution | `cat <<EOF\n$(rm -rf /)\nEOF` | inner YELLOW | walked via Hdoc |
+| coproc prefix | `coproc rm -rf /` | RED | Name="rm" |
+| Alias (raw name) | `rm -rf /` | RED | aliases not expanded |
+
+**Test implementation notes** (from shell expert panel review):
+- Use real newlines in Go test strings, not `\n` literals
+- Assert specific `CommandInfo` fields (Name, PipelinePosition, InSubstitution), not just final classification
+- Verify `Name` field equals resolved value (e.g., "rm") for ANSI-C quoting tests
+- Process substitution `<()` / `>()` must set `InSubstitution=true`
 
 - [ ] **Step 2: Run tests, fix any gaps in parser/walker**
 

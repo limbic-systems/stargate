@@ -12,7 +12,6 @@ type metrics struct {
 	classificationsTotal    metric.Int64Counter
 	llmCallsTotal          metric.Int64Counter
 	parseErrorsTotal       metric.Int64Counter
-	configReloadsTotal     metric.Int64Counter
 	corpusHitsTotal        metric.Int64Counter
 	corpusWritesTotal      metric.Int64Counter
 	feedbackTotal          metric.Int64Counter
@@ -43,10 +42,6 @@ func initMetrics(m metric.Meter) (*metrics, error) {
 		return nil, err
 	}
 	mt.parseErrorsTotal, err = m.Int64Counter("stargate_parse_errors_total")
-	if err != nil {
-		return nil, err
-	}
-	mt.configReloadsTotal, err = m.Int64Counter("stargate_config_reloads_total")
 	if err != nil {
 		return nil, err
 	}

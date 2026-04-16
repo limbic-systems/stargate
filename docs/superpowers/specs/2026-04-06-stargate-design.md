@@ -71,7 +71,7 @@ While the primary integration target is Claude Code, stargate is designed to be 
 | **LLM Reviewer** | Calls an LLM (default: Claude Haiku 4.5) via a provider-agnostic interface for YELLOW commands flagged with `llm_review = true`. Scopes are injected into the prompt for fallback reasoning. |
 | **File Resolver** | When the LLM requests file contents referenced in the command, reads and returns them (with size limits and path validation) |
 | **Precedent Corpus** | SQLite-backed store of past LLM judgments. Provides precedent injection into LLM prompts for consistency, and records user approvals via the feedback loop. |
-| **Config Loader** | Parses TOML config, validates rule definitions, supports hot-reload via SIGHUP |
+| **Config Loader** | Parses TOML config, validates rule definitions |
 | **Telemetry** | Exports structured logs and classification metrics to Grafana Cloud via OpenTelemetry (OTLP/HTTP). Stargate owns its own trace identity. |
 | **Agent Adapters** | The `stargate hook` subcommand family — reads agent-specific stdin, dispatches HTTP to `/classify` or `/feedback`, translates the response to the agent's hook protocol. Contains no classification logic. |
 
@@ -919,7 +919,7 @@ max_precedents_per_polarity = 3
 #
 # This is a performance cache, not a permanent approval. It is:
 #   - In-memory only (lost on restart)
-#   - Invalidated on config reload (SIGHUP) — rules/scopes may have changed
+#   - Lost on server restart (config changes require restart)
 #   - Short-lived (cache_ttl, default 1h)
 #   - Keyed on the EXACT raw command + CWD, not structural signature
 #   - Stores decision (rule tier) and action (final outcome) only — not
@@ -1608,30 +1608,9 @@ All exit-2 paths are fail-closed.
 }
 ```
 
-#### `POST /reload`
+#### ~~`POST /reload`~~ (Removed)
 
-Hot-reload the TOML config without restarting the server. Also triggered by `SIGHUP`.
-
-**Reload semantics:**
-1. Load the config file from the original path (resolved at startup).
-2. Validate the new config via `Config.Validate()`. If validation fails, keep the old config and return an error.
-3. Recompile rules via `rules.NewEngine(newCfg)`. If compilation fails, keep the old config.
-4. Atomically swap the config via `atomic.Pointer[Config].Store()`.
-5. Invalidate the command cache (rules/scopes may have changed).
-6. Record `stargate_config_reloads_total{status="success"|"failure"}` metric.
-7. Record `stargate_config_last_reload_timestamp_seconds` gauge (Unix epoch seconds, unit `"s"`).
-8. Log result to stderr: success with rule count summary, or failure with error detail.
-
-**Response:**
-- Success: `200 OK` with `{"status": "ok", "rules_loaded": {"red": N, "yellow": N, "green": N}}`
-- Validation failure: `400 Bad Request` with `{"error": "validation: ...", "status": "rejected"}`
-- Load failure: `500 Internal Server Error` with `{"error": "load: ...", "status": "failed"}`
-
-**SIGHUP behavior:** Identical to `POST /reload` but triggered by the OS signal. Success/failure logged to stderr. No HTTP response (signal handler has no client).
-
-**What is NOT reloaded:** The LLM provider (API keys are read once at startup), the corpus database path, the listen address, and the telemetry configuration. These require a full restart.
-
-**Fail-closed on reload:** If the new config is invalid, the server continues operating with the old config. Classification is never interrupted. This is a "fail-safe" reload — the worst case is stale config, not broken classification.
+> **Design decision (M8 panel review):** Hot-reload was removed after expert panel review identified two HIGH-severity issues: (1) reloading config without rebuilding the entire Classifier leaves rules/engine/scrubber stale (atomic.Pointer[Config] is insufficient), and (2) rebuilding the Classifier regenerates the HMAC secret, invalidating all outstanding feedback tokens. The complexity of solving both (preserving HMAC secrets across Classifier rebuilds, atomic Classifier swap with in-flight request draining) is disproportionate for a localhost process that restarts in milliseconds. Operators should stop and restart the server to apply config changes.
 
 #### `POST /test`
 
@@ -1922,7 +1901,7 @@ The evaluation result carries:
 #### 7.3.4 Implementation Notes
 
 - **`--flag=value` stripping** is performed at match time in the rule engine, not in the parser's `CommandInfo.Flags`. This preserves the original flag form in `CommandInfo` for corpus signatures and telemetry, while allowing rule matching to be value-agnostic.
-- **Regex compilation** happens once at config load time (and on hot-reload). Compiled `*regexp.Regexp` objects are stored on the rule struct. They are never recompiled per `/classify` call.
+- **Regex compilation** happens once at config load time (and on restart). Compiled `*regexp.Regexp` objects are stored on the rule struct. They are never recompiled per `/classify` call.
 - **Performance** is O(rules × commands) per tier. For typical configs (tens of rules, single-digit commands), this is sub-microsecond. Config validation emits a warning if total rule count exceeds 200, at which point a command-name index optimization should be considered.
 - **`doublestar.Match`** is used for `args` glob patterns. The `doublestar` library is pure Go with no CGO dependency. Patterns are validated at config load time.
 
@@ -1942,7 +1921,7 @@ When a YELLOW rule with `llm_review = true` matches:
    - The AST summary (`{{ast_summary}}`) also uses redacted values from the scrubbed `CommandInfo`.
    - **LLM reasoning and risk_factors are scrubbed** before inclusion in the API response or corpus — the LLM may echo secrets from the command or file contents.
    - Redaction is one-way: the original values are available to the rule engine and resolvers (which run before the LLM step) but are never included in any LLM-bound data.
-   - Scrubbing regex patterns (built-in and `extra_patterns`) are compiled once at config load time and reused across requests. Recompilation occurs only on config hot-reload.
+   - Scrubbing regex patterns (built-in and `extra_patterns`) are compiled once at config load time and reused across requests. Recompilation occurs only on restart.
    - **Future: scope-contributed patterns.** The current built-in patterns are a global cross-domain list. A future improvement (deferred to M8 hardening) would let resolvers contribute domain-specific scrub patterns — e.g., the `github_repo_owner` resolver declares `ghp_` and `github_pat_` patterns, the `k8s_context` resolver declares kubeconfig token patterns. This could be expressed via a `PatternContributor` interface on resolvers, or as `scrub_patterns` metadata in resolver config. The benefit is co-location of domain knowledge: the code that understands a token format is the same code that scrubs it. The current `extra_patterns` config covers operator customization in the interim.
 4. **Build the initial prompt.** Interpolate the system prompt template with the scrubbed command, scrubbed AST summary, CWD, rule reason, precedents, and scopes. The `{{file_contents}}` block is empty on the first call.
 5. **First LLM call** via the provider interface with configured temperature and max_tokens.
@@ -2285,7 +2264,6 @@ Metric instrument names use underscores (OTel/Prometheus convention). Span and l
 | `stargate_classifications_total` | `decision`, `rule_level` |
 | `stargate_llm_calls_total` | `outcome` (allow/deny/error/timeout) |
 | `stargate_parse_errors_total` | — |
-| `stargate_config_reloads_total` | `status` |
 | `stargate_corpus_hits_total` | `type` (exact/precedent) |
 | `stargate_corpus_writes_total` | `decision` |
 | `stargate_feedback_total` | `outcome` (executed/failed/trace_not_found/trace_expired) |
@@ -2305,9 +2283,6 @@ Metric instrument names use underscores (OTel/Prometheus convention). Span and l
 |--------|--------|
 | `stargate_rules_loaded` | `level` |
 | `stargate_corpus_entries` | `decision` |
-| `stargate_config_last_reload_timestamp_seconds` | — |
-
-Note: `stargate_config_last_reload_timestamp_seconds` is defined here but implemented in M8 (hot-reload). Set to server start time initially, updated on each successful SIGHUP/POST /reload.
 
 ### 9.4 Traces
 
@@ -2459,8 +2434,9 @@ When `telemetry.enabled = false` (the default), the `Telemetry` struct must be a
 
 | Signal | Behavior |
 |--------|----------|
-| `SIGHUP` | Hot-reload config. Log success/failure. Continue serving. |
 | `SIGINT` / `SIGTERM` | Graceful shutdown: finish in-flight requests (5s), flush OTel providers, checkpoint SQLite WAL, exit. |
+
+> **Note:** `SIGHUP` was considered for hot-reload but removed — see `POST /reload` section for rationale. Config changes require a server restart.
 
 ### 11.3 Implementation Constraints
 
@@ -2612,5 +2588,5 @@ Run as `go test ./... -run TestCorpus`.
 | **M5: Precedent Corpus** | SQLite schema, structural signatures, similarity search, precedent formatting, corpus CLI, user approval recording via `/feedback`. |
 | **M6: Agent Adapters + Feedback** | Claude Code adapter (pre-tool-use + post-tool-use), `--agent` and `--event` flags, tool_use_id → trace_id correlation, temp file handoff. |
 | **M7: Telemetry** | OTel SDK init, OTLP/HTTP exporters, structured logs, metrics, trace span tree with feedback spans, Grafana Cloud auth. |
-| **M8: Hardening** | Evasion test corpus, config hot-reload, graceful shutdown, `/test` endpoint. |
+| **M8: Hardening** | Evasion test corpus, `/test` endpoint, `stargate test` CLI. |
 | **M9: Distribution** | Makefile with cross-compilation, README, example config, install script. |

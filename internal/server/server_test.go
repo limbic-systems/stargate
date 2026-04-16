@@ -101,7 +101,6 @@ func TestStubEndpointsReturn501(t *testing.T) {
 	srv := mustNewServer(t, cfg)
 
 	endpoints := []struct{ method, path string }{
-		{"POST", "/reload"},
 		{"POST", "/test"},
 	}
 	for _, ep := range endpoints {

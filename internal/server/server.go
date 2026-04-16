@@ -68,7 +68,6 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /health", s.handleHealth)
 	s.mux.HandleFunc("POST /classify", s.handleClassify)
 	s.mux.HandleFunc("POST /feedback", s.clf.HandleFeedback)
-	s.mux.HandleFunc("POST /reload", stubHandler)
 	s.mux.HandleFunc("POST /test", stubHandler)
 }
 
