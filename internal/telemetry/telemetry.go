@@ -274,11 +274,11 @@ func (lt *LiveTelemetry) StartSpan(ctx context.Context, name string) (context.Co
 
 func (lt *LiveTelemetry) StartFeedbackSpan(ctx context.Context, originalTraceID string) (context.Context, trace.Span) {
 	var opts []trace.SpanStartOption
+	var linked bool
 	if originalTraceID != "" {
 		tid, err := trace.TraceIDFromHex(originalTraceID)
 		if err == nil {
 			// SpanID must be non-zero for the link to be considered valid.
-			// Use a fixed placeholder since we only need the TraceID for correlation.
 			var placeholderSpanID trace.SpanID
 			placeholderSpanID[0] = 0x01
 			link := trace.Link{
@@ -289,11 +289,12 @@ func (lt *LiveTelemetry) StartFeedbackSpan(ctx context.Context, originalTraceID 
 				}),
 			}
 			opts = append(opts, trace.WithLinks(link))
+			linked = true
 		}
 	}
 	opts = append(opts, trace.WithNewRoot())
 	ctx, span := lt.tracer.Start(ctx, "stargate.feedback", opts...)
-	if originalTraceID != "" {
+	if linked {
 		span.SetAttributes(attribute.String("stargate.trace_id", originalTraceID))
 	}
 	return ctx, span
