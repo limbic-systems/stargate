@@ -4,6 +4,7 @@ package config
 import (
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -266,17 +267,29 @@ func (c CorpusConfig) GetMaxEntries() int {
 	return *c.MaxEntries
 }
 
+// RedactedString is a string type that redacts its value in fmt output.
+// Used for credentials that must not appear in logs or debug output.
+type RedactedString string
+
+// String returns "[REDACTED]" to prevent accidental credential exposure
+// via fmt.Sprintf("%v", cfg) or fmt.Sprintf("%+v", parentStruct).
+func (r RedactedString) String() string { return "[REDACTED]" }
+
+// GoString returns "[REDACTED]" to prevent exposure via fmt.Sprintf("%#v", val).
+func (r RedactedString) GoString() string { return "[REDACTED]" }
+
 // TelemetryConfig holds OpenTelemetry export settings.
 type TelemetryConfig struct {
-	Enabled        bool   `toml:"enabled"`
-	Endpoint       string `toml:"endpoint"`
-	Username       string `toml:"username"`
-	Password       string `toml:"password"`
-	Protocol       string `toml:"protocol"`
-	ExportLogs     bool   `toml:"export_logs"`
-	ExportMetrics  bool   `toml:"export_metrics"`
-	ExportTraces   bool   `toml:"export_traces"`
-	ServiceName    string `toml:"service_name"`
+	Enabled              bool           `toml:"enabled"`
+	Endpoint             string         `toml:"endpoint"`
+	Username             string         `toml:"username"`
+	Password             RedactedString `toml:"password"`
+	Protocol             string         `toml:"protocol"`
+	ExportLogs           bool           `toml:"export_logs"`
+	ExportMetrics        bool           `toml:"export_metrics"`
+	ExportTraces         bool           `toml:"export_traces"`
+	ServiceName          string         `toml:"service_name"`
+	IncludeScrubCommand  bool           `toml:"include_scrubbed_command"`
 }
 
 // LogConfig holds local logging settings.
@@ -647,9 +660,18 @@ func (cfg *Config) Validate() error {
 	if cfg.Telemetry.Enabled && cfg.Telemetry.Endpoint == "" {
 		return fmt.Errorf("config: telemetry.endpoint is required when telemetry is enabled")
 	}
-	validTelemetryProtocols := map[string]bool{"": true, "http/protobuf": true, "grpc": true}
+	if cfg.Telemetry.Enabled && cfg.Telemetry.Endpoint != "" {
+		epLower := strings.ToLower(cfg.Telemetry.Endpoint)
+		if !strings.HasPrefix(epLower, "http://") && !strings.HasPrefix(epLower, "https://") {
+			return fmt.Errorf("config: telemetry.endpoint must use http:// or https:// scheme; got %q", cfg.Telemetry.Endpoint)
+		}
+		if u, err := url.Parse(cfg.Telemetry.Endpoint); err != nil || u.Host == "" {
+			return fmt.Errorf("config: telemetry.endpoint must be a valid URL with a host; got %q", cfg.Telemetry.Endpoint)
+		}
+	}
+	validTelemetryProtocols := map[string]bool{"": true, "http/protobuf": true}
 	if !validTelemetryProtocols[cfg.Telemetry.Protocol] {
-		return fmt.Errorf("config: telemetry.protocol must be http/protobuf or grpc; got %q", cfg.Telemetry.Protocol)
+		return fmt.Errorf("config: telemetry.protocol must be http/protobuf (or empty for default); got %q", cfg.Telemetry.Protocol)
 	}
 
 	// --- Log ---

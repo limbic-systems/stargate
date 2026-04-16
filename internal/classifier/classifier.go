@@ -24,6 +24,7 @@ import (
 	"github.com/limbic-systems/stargate/internal/parser"
 	"github.com/limbic-systems/stargate/internal/rules"
 	"github.com/limbic-systems/stargate/internal/scrub"
+	"github.com/limbic-systems/stargate/internal/telemetry"
 )
 
 // Classifier orchestrates the parse → rule-engine → LLM review pipeline.
@@ -48,6 +49,7 @@ type Classifier struct {
 	feedbackHandler *feedback.Handler
 	hmacSecret      []byte
 	cancel          context.CancelFunc  // cancels the classifier-lifecycle context
+	tel             telemetry.Telemetry // defaults to NoOpTelemetry
 }
 
 // ClassifyRequest is the input to the classifier.
@@ -249,7 +251,18 @@ func New(cfg *config.Config) (*Classifier, error) {
 		feedbackHandler: feedbackHandler,
 		hmacSecret:      hmacSecret,
 		cancel:          cancel,
+		tel:             &telemetry.NoOpTelemetry{},
 	}, nil
+}
+
+// SetTelemetry injects a Telemetry implementation. Must be called before
+// the first Classify call. Not thread-safe — call during initialization only.
+// Nil is treated as NoOp.
+func (c *Classifier) SetTelemetry(t telemetry.Telemetry) {
+	if t == nil {
+		t = &telemetry.NoOpTelemetry{}
+	}
+	c.tel = t
 }
 
 // NewWithProvider creates a Classifier with an explicit LLM provider.
@@ -295,7 +308,22 @@ func (s *classifyState) ensureSignature() {
 // It never returns nil.
 func (c *Classifier) Classify(ctx context.Context, req ClassifyRequest) *ClassifyResponse {
 	start := time.Now()
-	traceID := newTraceID()
+
+	// Start classify span — OTel TraceID becomes stargate_trace_id when available.
+	ctx, span := c.tel.StartClassifySpan(ctx)
+	defer span.End()
+
+	traceID := c.tel.TraceIDFromContext(ctx)
+	if traceID == "" {
+		traceID = newTraceID() // fallback when telemetry disabled
+	}
+
+	// Store tool_use_id → trace_id for feedback correlation.
+	if req.Context != nil {
+		if toolUseID, ok := req.Context["tool_use_id"].(string); ok && toolUseID != "" {
+			c.tel.StoreToolUseTrace(toolUseID, traceID)
+		}
+	}
 
 	// Normalize command — owned by the classifier so all entry points
 	// (HTTP, CLI, tests) behave consistently.
@@ -313,6 +341,11 @@ func (c *Classifier) Classify(ctx context.Context, req ClassifyRequest) *Classif
 
 	finalize := func() *ClassifyResponse {
 		resp.Timing.TotalMs = float64(time.Since(start).Microseconds()) / 1000
+		ruleLevel := "none"
+		if resp.Rule != nil {
+			ruleLevel = resp.Rule.Level
+		}
+		c.tel.RecordClassification(resp.Decision, ruleLevel, resp.Timing.TotalMs)
 		return resp
 	}
 

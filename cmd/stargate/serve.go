@@ -13,6 +13,8 @@ import (
 
 	"github.com/limbic-systems/stargate/internal/config"
 	"github.com/limbic-systems/stargate/internal/server"
+	"github.com/limbic-systems/stargate/internal/telemetry"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 // isLoopbackAddr returns true if addr binds to an explicit loopback IP only.
@@ -76,11 +78,26 @@ func handleServe(args []string, configPath string, verbose bool) int {
 		listenAddr = listenOverride
 	}
 
+	// Initialize telemetry.
+	tel, err := telemetry.Init(cfg.Telemetry)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "serve: telemetry init: %v\n", err)
+		return 1
+	}
+	defer func() {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		if err := tel.Shutdown(shutdownCtx); err != nil {
+			fmt.Fprintf(os.Stderr, "serve: telemetry shutdown: %v\n", err)
+		}
+	}()
+
 	srv, err := server.New(cfg)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "serve: %v\n", err)
 		return 1
 	}
+	srv.SetTelemetry(tel)
 	defer func() {
 		if err := srv.Close(); err != nil {
 			fmt.Fprintf(os.Stderr, "serve: close: %v\n", err)
@@ -88,7 +105,7 @@ func handleServe(args []string, configPath string, verbose bool) int {
 	}()
 	httpSrv := &http.Server{
 		Addr:              listenAddr,
-		Handler:           srv,
+		Handler:           otelhttp.NewHandler(srv, "stargate"),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      15 * time.Second,

@@ -227,6 +227,16 @@ func TestValidation(t *testing.T) {
 			wantErr: "telemetry.protocol",
 		},
 		{
+			name:    "telemetry endpoint bad scheme",
+			toml:    "[telemetry]\nenabled = true\nendpoint = \"ftp://collector:4318\"",
+			wantErr: "http:// or https://",
+		},
+		{
+			name:    "telemetry endpoint no host",
+			toml:    "[telemetry]\nenabled = true\nendpoint = \"https://\"",
+			wantErr: "valid URL with a host",
+		},
+		{
 			name:    "invalid log level",
 			toml:    "[log]\nlevel = \"trace\"",
 			wantErr: "log.level",
