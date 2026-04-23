@@ -83,13 +83,17 @@ func handleConfigDump(configPath string) int {
 	// Scrub secrets before TOML encoding. RedactedString.String() does NOT
 	// protect against reflection-based TOML marshaling — the encoder sees
 	// the raw underlying string value.
-	cfg.Telemetry.Password = "[REDACTED]"
+	if cfg.Telemetry.Password != "" {
+		cfg.Telemetry.Password = "[REDACTED]"
+	}
 
 	// Scrub the LLM system prompt for embedded API keys or secrets using
 	// the same scrubber that processes commands before LLM prompts.
 	if cfg.LLM.SystemPrompt != "" {
-		s, err := scrub.New(cfg.Scrubbing.ExtraPatterns)
-		if err == nil {
+		s, scrubErr := scrub.New(cfg.Scrubbing.ExtraPatterns)
+		if scrubErr != nil {
+			fmt.Fprintf(os.Stderr, "warning: scrubber init failed, system_prompt may contain secrets: %v\n", scrubErr)
+		} else {
 			cfg.LLM.SystemPrompt = s.Text(cfg.LLM.SystemPrompt)
 		}
 	}
