@@ -15,9 +15,27 @@ import (
 	"github.com/limbic-systems/stargate/internal/parser"
 )
 
+const corpusUsage = `Usage: stargate corpus <action> [flags]
+
+Inspect, search, and manage the precedent corpus.
+
+Actions:
+  stats                Print corpus statistics
+  search <command>     Search precedents by command string
+  inspect <id>         Show full details of an entry
+  invalidate <id>      Remove an entry by ID
+  clear --confirm      Remove all entries
+  export               Export as JSON to stdout
+  import <file>        Import entries from a previous export
+`
+
 func handleCorpus(args []string, configPath string, verbose bool) int {
+	if len(args) > 0 && (args[0] == "--help" || args[0] == "-h") {
+		fmt.Print(corpusUsage)
+		return 0
+	}
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: stargate corpus <stats|search|inspect|invalidate|clear|export|import>")
+		fmt.Fprint(os.Stderr, corpusUsage)
 		return 1
 	}
 
