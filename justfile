@@ -39,7 +39,7 @@ vet:
 
 # Run govulncheck for known vulnerabilities
 vuln:
-    @which govulncheck > /dev/null 2>&1 || go install golang.org/x/vuln/cmd/govulncheck@v1.1.3
+    @command -v govulncheck > /dev/null 2>&1 || go install golang.org/x/vuln/cmd/govulncheck@v1.1.3
     govulncheck ./...
 
 # Remove build artifacts
