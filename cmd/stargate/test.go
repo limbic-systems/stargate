@@ -61,11 +61,18 @@ func handleTest(args []string, configPath string, _ bool) int {
 		return 2
 	}
 
-	// Read command from stdin if requested.
+	// Read command from stdin if requested. Limit to 1MB to prevent
+	// unbounded memory consumption from unexpected input.
 	if f.readStdin {
-		buf, err := io.ReadAll(os.Stdin)
+		const maxStdinBytes = 1 << 20
+		limited := io.LimitReader(os.Stdin, maxStdinBytes+1)
+		buf, err := io.ReadAll(limited)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "test: reading stdin: %v\n", err)
+			return 2
+		}
+		if len(buf) > maxStdinBytes {
+			fmt.Fprintf(os.Stderr, "test: stdin exceeds %d bytes\n", maxStdinBytes)
 			return 2
 		}
 		f.command = strings.TrimSpace(string(buf))
