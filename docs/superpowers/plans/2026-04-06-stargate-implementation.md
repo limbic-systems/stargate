@@ -3112,6 +3112,42 @@ Goal: Justfile, cross-compilation, README, example config, install script, LICEN
 > - VERSION derived from `git describe --tags --always`, validated against `^[a-zA-Z0-9._-]+$`
 > - Static binary guaranteed by CGO_ENABLED=0 + pure-Go SQLite — self-enforcing, no check needed
 
+> **M9 Retrospective (post-implementation):** 19 threads, 6 Copilot review rounds, 1 PR.
+> Scope: 614 lines, 7 files. Lowest-severity milestone — no security-critical code.
+> No parser/walker/classifier changes.
+>
+> **Three patterns drove the 19 threads:**
+>
+> 1. **Cross-platform portability (4 threads)** — `which` vs `command -v`, `shasum` vs
+>    `sha256sum`, GOPATH path-list handling, mkdir before build. **Lesson:** Justfile
+>    recipes must work on both macOS and Linux. Use `command -v` over `which` always.
+>    Test recipes on both platforms or use detection patterns.
+>
+> 2. **Test helper robustness (4 threads on same function)** — captureStdout had issues
+>    with pipe fd leaks, panic safety (defer ordering), and pipe buffer deadlock concern.
+>    Copilot iterated 4 times on this one function. **Lesson:** stdout capture in tests
+>    is a known fragile pattern in Go. Defer all resource cleanup before the code under
+>    test runs. For small outputs (<64KB), the pipe approach is fine. Push back when
+>    Copilot cycles on theoretical concerns.
+>
+> 3. **Documentation accuracy (5 threads)** — corpus help text didn't match implementation,
+>    README claimed --allow-remote for server bind when it's hook-only, serve --help
+>    didn't mention loopback restriction, config dump scrubbing edge cases (empty password,
+>    scrubber failure). **Lesson:** Same M1-M8 pattern. Every user-facing string must be
+>    verified against actual behavior. Help text should be auto-generated from the code
+>    in future milestones.
+>
+> **Secret handling (3 threads):** config dump password scrubbing generated 3 rounds:
+> empty password → [REDACTED] (wrong), scrubber failure → silent fallback (wrong),
+> missing SystemPrompt scrubbing test. All caught by Copilot. **Lesson:** Secret
+> scrubbing needs both positive tests (secret removed) AND negative tests (no false
+> redaction on empty values).
+>
+> **Trend:** M1:84 → M2:61 → M3:28 → M4:91 → M5:100 → M6:34 → M7:41 → M8:14 → M9:19.
+> M9 thread count is low and appropriate for the scope. The panel design review
+> (3 rounds, zero notes on round 3) prevented the config dump password leak (HIGH)
+> from reaching implementation.
+
 ### Task 9.1: Justfile and cross-compilation
 
 **Files:**
