@@ -3124,14 +3124,19 @@ Recipes:
 - `build-all` — cross-compile linux/darwin × amd64/arm64 (4 binaries)
 - `test` — `go test ./... -race`
 - `vet` — `go vet ./...`
-- `vuln` — `govulncheck ./...` (install if missing)
+- `vuln` — `govulncheck ./...` (install at pinned version if missing, e.g. `@v1.1.3`)
 - `clean` — remove all build artifacts
 - `install` — install to `INSTALL_DIR` (default: `$(go env GOPATH)/bin`). No implicit sudo.
 - `checksums` — generate `SHA256SUMS` file for all binaries in build output
 
 VERSION derived from `git describe --tags --always`, validated against
-`^[a-zA-Z0-9._-]+$` before injection via `-ldflags="-X main.Version=..."`.
+`^[a-zA-Z0-9._-]+$` in a single atomic expression — capture, validate,
+and inject in one recipe step. Validation failure aborts the build with
+non-zero exit (no fallback to a default version string).
 Binary naming: `stargate-{{os}}-{{arch}}`.
+
+Checksums are unsigned (no GPG/cosign). Signing is a future distribution
+concern — document as an accepted limitation for the initial release.
 
 - [ ] **Step 2: Test all recipes, commit**
 
@@ -3197,7 +3202,8 @@ git commit -m "docs: add README with quick start, CLI reference, and security no
 **Secret scrubbing before encode** (panel finding — RedactedString.String() does
 NOT protect against TOML reflection-based marshaling):
 - Zero `cfg.Telemetry.Password` to `"[REDACTED]"` before encoding
-- Consider also scrubbing `cfg.LLM.SystemPrompt` if it contains API keys
+- Run the scrubber (`scrub.Scrubber.Command`) over `cfg.LLM.SystemPrompt` to
+  strip any embedded API keys or secrets before encoding
 
 **Comment header** (panel finding — audit trail value):
 ```toml
@@ -3234,8 +3240,10 @@ Empty scopes map prints "no scopes defined" instead of empty output.
 
 Test:
 - `config dump` with valid config → valid TOML output (round-trip parse)
+- `config dump` round-trip idempotency: load dump output → re-dump → output identical
 - `config dump` with invalid config → exit 1 with error
 - `config dump` scrubs password field (output does NOT contain raw password)
+- `config dump` scrubs SystemPrompt secrets (scrubber applied before output)
 - `config dump` includes comment header with config path and version
 - `config rules` → table includes all rule tiers
 - `config rules` with empty tier → renders header, no panic

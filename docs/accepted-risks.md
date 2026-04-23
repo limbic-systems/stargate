@@ -80,6 +80,6 @@ Risks evaluated by the expert panel and accepted with documented mitigations.
 
 **Mitigation:** Localhost access is already the trust boundary — anyone who can POST to 127.0.0.1 already has local code execution and can observe classification results directly. All `/test` requests emit telemetry spans with `stargate.dry_run=true` attribute, providing an audit trail for after-the-fact detection of probing patterns. Detection is passive — it requires operator monitoring of OTel output, not automated alerting. `/test` shares the same LLM rate-limit budget as `/classify`, preventing unbounded LLM cost amplification.
 
-The same oracle concern applies to `stargate config rules` (prints the full rule set including patterns, flags, and scopes) and `stargate config dump` (prints the effective config). Both are operator-facing CLI tools running on the local machine with the same localhost trust boundary.
+The same oracle concern applies to `stargate config rules` (prints the full rule set including patterns, flags, and scopes), `stargate config scopes` (prints the full scope inventory including trusted remote patterns and allowed paths), and `stargate config dump` (prints the effective config). All are operator-facing CLI tools running on the local machine with the same localhost trust boundary.
 
-**Panel:** M8-R2-Compliance-1, M9-R1-AppSec-5
+**Panel:** M8-R2-Compliance-1, M9-R1-AppSec-5, M9-R2-Compliance-5
