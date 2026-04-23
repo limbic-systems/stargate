@@ -3096,32 +3096,51 @@ Goal: Justfile, cross-compilation, README, example config, install script, LICEN
 >
 > From M8 (resource management): Justfile cross-compilation must not leave temp artifacts.
 > clean target must be thorough.
+>
+> **Panel design decisions (round 1, 4 experts):**
+> - `config dump` must scrub `Telemetry.Password` before TOML encoding — `RedactedString.String()`
+>   does NOT protect against reflection-based TOML marshaling. Zero the field before encode.
+> - `config dump` shows effective config (post-defaults, including wrappers/commands). Documented
+>   with a comment header. Round-trip is stable but output may differ from user's TOML file.
+> - Dump output includes a TOML comment header: config path, version, "effective config"
+> - README must document: trust anchor placement (stargate.toml outside repo), fail-closed
+>   behavior on server unreachable (exit 2, not exit 0)
+> - `config rules` oracle risk added to accepted-risks alongside `/test`
+> - Install target defaults to `$(go env GOPATH)/bin` with `INSTALL_DIR` override. No implicit sudo.
+> - `just vuln` recipe for `govulncheck`
+> - `just checksums` recipe generates SHA256SUMS for release binaries
+> - VERSION derived from `git describe --tags --always`, validated against `^[a-zA-Z0-9._-]+$`
+> - Static binary guaranteed by CGO_ENABLED=0 + pure-Go SQLite — self-enforcing, no check needed
 
 ### Task 9.1: Justfile and cross-compilation
 
 **Files:**
-- Create: `Justfile`
+- Create: `justfile`
 
-- [ ] **Step 1: Create Justfile**
+- [ ] **Step 1: Create justfile**
 
-Targets:
+Recipes:
 - `build` — local platform, `CGO_ENABLED=0` for static binary
 - `build-all` — cross-compile linux/darwin × amd64/arm64 (4 binaries)
-- `test` — `go test ./...` with race detector
+- `test` — `go test ./... -race`
 - `vet` — `go vet ./...`
-- `lint` — `go vet` (no external linter dependency)
+- `vuln` — `govulncheck ./...` (install if missing)
 - `clean` — remove all build artifacts
-- `install` — install to `$GOPATH/bin` or `/usr/local/bin`
+- `install` — install to `INSTALL_DIR` (default: `$(go env GOPATH)/bin`). No implicit sudo.
+- `checksums` — generate `SHA256SUMS` file for all binaries in build output
 
-Version injected via `-ldflags="-X main.Version=$(VERSION)"`.
-Binary naming: `stargate-$(GOOS)-$(GOARCH)`.
+VERSION derived from `git describe --tags --always`, validated against
+`^[a-zA-Z0-9._-]+$` before injection via `-ldflags="-X main.Version=..."`.
+Binary naming: `stargate-{{os}}-{{arch}}`.
 
-- [ ] **Step 2: Test all targets, commit**
+- [ ] **Step 2: Test all recipes, commit**
 
-Verify: `just build` produces a working binary, `just test` passes, `just clean` removes artifacts, `just build-all` produces 4 binaries.
+Verify: `just build` produces a working binary, `just test` passes,
+`just clean` removes artifacts, `just build-all` produces 4 binaries,
+`just checksums` produces SHA256SUMS file.
 
 ```bash
-git commit -m "chore: add Justfile with cross-compilation targets"
+git commit -m "chore: add justfile with cross-compilation and vuln scanning"
 ```
 
 ### Task 9.2: README and documentation
@@ -3138,7 +3157,18 @@ Sections:
 - CLI reference (serve, hook, test, config, corpus — one table)
 - Configuration reference (key stargate.toml sections with examples)
 - How it works (one-paragraph pipeline overview)
+- Security notes
 - Development (just recipes, running tests)
+
+**Security notes** (required by panel review):
+- Trust anchor: `stargate.toml` MUST live outside any repository that stargate
+  guards. A config inside a repo is writable by repo contents and therefore
+  untrusted. Default path: `~/.config/stargate/stargate.toml`.
+- Fail-closed: if the stargate server is unreachable, the hook exits with
+  code 2 (blocking error in Claude Code). Commands are NOT silently allowed.
+- `config dump` may contain sensitive fields if credentials are stored in
+  the TOML file rather than environment variables. Password fields are
+  scrubbed but other values (LLM prompts, extra scrub patterns) are not.
 
 Keep it concise — link to spec for detailed documentation.
 
@@ -3151,7 +3181,7 @@ output matches documented output. This prevents comment/code drift
 - [ ] **Step 3: Commit**
 
 ```bash
-git commit -m "docs: add README with quick start and CLI reference"
+git commit -m "docs: add README with quick start, CLI reference, and security notes"
 ```
 
 ### Task 9.3: `stargate config dump`, `config rules`, `config scopes`
@@ -3162,9 +3192,24 @@ git commit -m "docs: add README with quick start and CLI reference"
 
 - [ ] **Step 1: Implement config dump**
 
-`config dump` — loads config, validates, prints as TOML to stdout. Includes
-effective defaults (not just user-set values). Fails with exit 1 and clear
-error message on invalid config — never dumps partial state.
+`config dump` — loads config, validates, scrubs secrets, prints as TOML to stdout.
+
+**Secret scrubbing before encode** (panel finding — RedactedString.String() does
+NOT protect against TOML reflection-based marshaling):
+- Zero `cfg.Telemetry.Password` to `"[REDACTED]"` before encoding
+- Consider also scrubbing `cfg.LLM.SystemPrompt` if it contains API keys
+
+**Comment header** (panel finding — audit trail value):
+```toml
+# stargate config dump
+# config: /path/to/stargate.toml
+# version: 0.2.0-dev
+# effective config (includes defaults)
+```
+
+Shows effective config post-defaults (including wrappers/commands the user
+didn't write). Documented in the header. Fails with exit 1 and clear error
+on invalid config — never dumps partial state.
 
 `config validate` — already implemented (loads and validates, exits 0/1).
 
@@ -3178,16 +3223,23 @@ green  git, ls    —           —      —        safe read-only commands
 yellow curl       —           —      —        network access requires review
 ```
 
+Empty tiers render the header row with no data rows (no panic, no omission).
+
 - [ ] **Step 3: Implement config scopes**
 
 `config scopes` — loads config, prints defined scopes and their patterns.
+Empty scopes map prints "no scopes defined" instead of empty output.
 
 - [ ] **Step 4: Write tests**
 
 Test:
 - `config dump` with valid config → valid TOML output (round-trip parse)
 - `config dump` with invalid config → exit 1 with error
+- `config dump` scrubs password field (output does NOT contain raw password)
+- `config dump` includes comment header with config path and version
 - `config rules` → table includes all rule tiers
+- `config rules` with empty tier → renders header, no panic
+- `config scopes` with no scopes → prints "no scopes defined"
 - `config validate` → exit 0 for valid, exit 1 for invalid (already tested)
 
 - [ ] **Step 5: Commit**
