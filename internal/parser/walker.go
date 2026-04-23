@@ -101,6 +101,14 @@ func wordLiteral(w *syntax.Word) (string, bool) {
 				if err != nil {
 					return "", false
 				}
+				// Truncate at first null byte: $'rm\x00garbage' must resolve
+				// to "rm", not "rm\x00garbage". The kernel's execve() treats
+				// the command name as a C string (null-terminated), so bash
+				// actually executes "rm". Without truncation, the rule engine
+				// would see "rm\x00garbage" and fail to match the "rm" rule.
+				if idx := strings.IndexByte(decoded, 0); idx >= 0 {
+					decoded = decoded[:idx]
+				}
 				sb.WriteString(decoded)
 			} else {
 				sb.WriteString(p.Value)
@@ -420,8 +428,18 @@ func walkCmd(ws *walkerState, cmd syntax.Command) {
 			// like `declare -A x=([index]=)` — guard against that.
 			if a.Array != nil {
 				for _, elem := range a.Array.Elems {
-					if elem != nil && elem.Value != nil {
+					if elem == nil {
+						continue
+					}
+					if elem.Value != nil {
 						walkWordSubsts(ws, elem.Value)
+					}
+					// Associative array keys can contain command substitutions:
+					// declare -A arr=([$(dangerous)]=val). The Index field is an
+					// ArithmExpr (which includes *syntax.Word) — walk it to find
+					// any nested CmdSubst.
+					if elem.Index != nil {
+						walkArithmExpr(ws, elem.Index)
 					}
 				}
 			}

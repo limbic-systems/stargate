@@ -152,6 +152,31 @@ func TestEvasion_AnsiCMixed(t *testing.T) {
 	}
 }
 
+func TestEvasion_AnsiCNullByteTruncation(t *testing.T) {
+	// $'rm\x00garbage' — the kernel's execve treats the command as a
+	// C-string that terminates at the null byte. Bash actually executes
+	// "rm". The walker must truncate at the null to match rule engine
+	// behavior with the actual executed command.
+	cmds := walk(t, `$'rm\x00garbage' -rf /`)
+	rm := findByName(cmds, "rm")
+	if rm == nil {
+		t.Fatalf("expected Name=rm after null truncation; got %+v", cmds)
+	}
+}
+
+func TestEvasion_AssocArrayKeyCmdSubst(t *testing.T) {
+	// declare -A arr=([$(dangerous)]=val) — CmdSubst in the key (Index),
+	// not the value. The walker must walk elem.Index via walkArithmExpr.
+	cmds := walk(t, `declare -A arr=([$(dangerous)]=val)`)
+	d := findByName(cmds, "dangerous")
+	if d == nil {
+		t.Fatalf("dangerous not found in assoc array key; got %+v", cmds)
+	}
+	if !d.Context.InSubstitution {
+		t.Errorf("dangerous should have InSubstitution=true")
+	}
+}
+
 func TestEvasion_BackslashInLit(t *testing.T) {
 	// \rm -rf / — backslash stripped to "rm".
 	cmds := walk(t, `\rm -rf /`)

@@ -96,6 +96,10 @@ func handleTest(args []string, configPath string, _ bool) int {
 		fmt.Fprintf(os.Stderr, "test: %v\n", err)
 		return 1
 	}
+	if resp == nil {
+		fmt.Fprintln(os.Stderr, "test: classifier returned nil response")
+		return 1
+	}
 
 	printResponse(os.Stdout, resp, f)
 	return 0
@@ -127,7 +131,7 @@ func runServer(ctx context.Context, f *testFlags) (*classifier.ClassifyResponse,
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: f.timeout}
+	client := &http.Client{}
 	httpResp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("POST %s: %w", endpoint, err)
@@ -303,15 +307,21 @@ func parseTestFlags(args []string) (*testFlags, error) {
 			// Positional argument = command. Join remaining args with spaces
 			// so multi-word commands work without explicit quoting.
 			f.command = strings.Join(args[i:], " ")
-			return f, nil
+			return validateTestFlags(f)
 		}
 
 		i++
 	}
 
-	if f.timeout <= 0 {
-		return nil, fmt.Errorf("--timeout must be positive")
-	}
+	return validateTestFlags(f)
+}
 
+// validateTestFlags checks invariants that must hold regardless of whether
+// a positional arg was found (previously the timeout check only ran on the
+// no-positional-arg path).
+func validateTestFlags(f *testFlags) (*testFlags, error) {
+	if f.timeout <= 0 {
+		return nil, fmt.Errorf("--timeout must be positive, got %v", f.timeout)
+	}
 	return f, nil
 }

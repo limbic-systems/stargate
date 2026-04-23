@@ -141,6 +141,22 @@ func TestParseTestFlags_UnknownFlag(t *testing.T) {
 	}
 }
 
+func TestParseTestFlags_ZeroTimeoutWithPositionalArg(t *testing.T) {
+	// --timeout 0s combined with a positional arg must be rejected.
+	// Previously the timeout check only ran when no positional arg was found.
+	_, err := parseTestFlags([]string{"--timeout", "0s", "ls"})
+	if err == nil {
+		t.Error("expected error for zero timeout with positional arg")
+	}
+}
+
+func TestParseTestFlags_NegativeTimeout(t *testing.T) {
+	_, err := parseTestFlags([]string{"--timeout", "-5s", "ls"})
+	if err == nil {
+		t.Error("expected error for negative timeout")
+	}
+}
+
 func TestParseTestFlags_Help(t *testing.T) {
 	_, err := parseTestFlags([]string{"--help"})
 	if err != errShowHelp {
