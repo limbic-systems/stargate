@@ -21,11 +21,11 @@ Inspect, search, and manage the precedent corpus.
 
 Actions:
   stats                Print corpus statistics
-  search <pattern>     Search precedents by command name or glob
+  search <command>     Search precedents by command string
   inspect <id>         Show full details of an entry
-  invalidate [flags]   Remove entries matching criteria
+  invalidate <id>      Remove an entry by ID
   clear --confirm      Remove all entries
-  export [file]        Export as newline-delimited JSON
+  export               Export as JSON to stdout
   import <file>        Import entries from a previous export
 `
 

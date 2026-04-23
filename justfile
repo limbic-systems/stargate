@@ -18,6 +18,7 @@ goflags := "CGO_ENABLED=0"
 
 # Build for local platform
 build:
+    mkdir -p {{dist}}
     {{goflags}} go build -ldflags '{{ldflags}}' -o {{dist}}/stargate ./cmd/stargate/
 
 # Cross-compile for linux/darwin × amd64/arm64
@@ -52,5 +53,5 @@ install: build
 
 # Generate SHA256 checksums for all binaries in dist/
 checksums: build-all
-    cd {{dist}} && shasum -a 256 stargate-* > SHA256SUMS
+    cd {{dist}} && if command -v sha256sum > /dev/null 2>&1; then sha256sum stargate-* > SHA256SUMS; elif command -v shasum > /dev/null 2>&1; then shasum -a 256 stargate-* > SHA256SUMS; else echo "ERROR: neither sha256sum nor shasum available" >&2; exit 1; fi
     @echo "Checksums written to {{dist}}/SHA256SUMS"

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -86,14 +87,19 @@ reason = "safe"
 func captureStdout(t *testing.T, f func()) string {
 	t.Helper()
 	old := os.Stdout
-	r, w, _ := os.Pipe()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
 	os.Stdout = w
+	defer func() { os.Stdout = old }()
 	f()
 	w.Close()
-	os.Stdout = old
-	buf := make([]byte, 256*1024)
-	n, _ := r.Read(buf)
-	return string(buf[:n])
+	buf, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("reading captured stdout: %v", err)
+	}
+	return string(buf)
 }
 
 // --- config dump ---

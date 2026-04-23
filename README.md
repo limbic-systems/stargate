@@ -112,7 +112,7 @@ Every command goes through a classification pipeline: **parse** (shell AST via `
 
 - **`config dump` sensitivity:** Password fields are scrubbed in `config dump` output, but other values (LLM system prompts, scrubbing patterns) appear as-is. Use environment variables for credentials rather than embedding them in the TOML file.
 
-- **Localhost only:** The server listens on `127.0.0.1` by default. Non-loopback addresses are rejected unless `--allow-remote` is explicitly passed (which is not recommended without TLS).
+- **Localhost only:** The server binds to `127.0.0.1` only. Non-loopback bind addresses are rejected by both the config validator and the `--listen` flag. The `--allow-remote` flag on `stargate hook` controls the *hook client* connecting to a remote server, not the server bind address.
 
 ## Development
 
