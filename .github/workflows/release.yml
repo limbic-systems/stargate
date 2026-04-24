@@ -1,0 +1,66 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # needed for git describe
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Validate tag format
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          if ! echo "$TAG" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9._-]+)?$'; then
+            echo "ERROR: tag '$TAG' does not match semver format"
+            exit 1
+          fi
+          echo "VERSION=$TAG" >> "$GITHUB_ENV"
+
+      - name: Run tests
+        run: go test ./... -race -count=1
+
+      - name: Run vet
+        run: go vet ./...
+
+      - name: Cross-compile
+        run: |
+          mkdir -p dist
+          for pair in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
+            GOOS="${pair%/*}"
+            GOARCH="${pair#*/}"
+            OUTPUT="dist/stargate-${GOOS}-${GOARCH}"
+            echo "Building $OUTPUT..."
+            CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
+              go build -ldflags="-X main.Version=$VERSION" \
+              -o "$OUTPUT" ./cmd/stargate/
+          done
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum stargate-* > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            dist/stargate-linux-amd64
+            dist/stargate-linux-arm64
+            dist/stargate-darwin-amd64
+            dist/stargate-darwin-arm64
+            dist/SHA256SUMS
