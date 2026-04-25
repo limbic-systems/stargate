@@ -28,6 +28,7 @@ flowchart TD
     F --> X[Command executes]
     K --> Y[Command executes]
     H -->|user approves| Y
+    H -->|user denies| E2
     Y --> N[Post-tool-use hook]
     N --> O[Record feedback in corpus]
 
