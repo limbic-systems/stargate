@@ -157,6 +157,34 @@ Add to your Claude Code hooks configuration (`.claude/settings.json`):
 
 Run `stargate <subcommand> --help` for detailed flags.
 
+## Environment Variables
+
+### LLM Authentication
+
+Set **one** of these to enable LLM review for YELLOW commands. If neither is set, LLM review is disabled and all YELLOW commands prompt the user directly.
+
+| Variable | How it works | Tradeoffs |
+|----------|-------------|-----------|
+| `ANTHROPIC_API_KEY` | Direct API calls via the Anthropic SDK. | **Faster** (~3-4s per review). Requires a paid API key from [console.anthropic.com](https://console.anthropic.com). You control the billing account and rate limits. |
+| `CLAUDE_CODE_OAUTH_TOKEN` | Subprocess calls via `claude -p`. Requires the `claude` CLI on PATH. | **Slower** (~10-12s per review) but uses your existing Claude Code authentication — no separate API key needed. |
+
+Do not set both. If both are set, `ANTHROPIC_API_KEY` takes precedence.
+
+```bash
+# Option 1: Direct API key (recommended for production)
+export ANTHROPIC_API_KEY="sk-ant-..."
+
+# Option 2: Use Claude Code's OAuth token (convenient for development)
+export CLAUDE_CODE_OAUTH_TOKEN="sk-ant-oat01-..."
+```
+
+### Other Variables
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `STARGATE_CONFIG` | `~/.config/stargate/stargate.toml` | Override the config file path. |
+| `STARGATE_URL` | `http://127.0.0.1:9099` | Override the server URL for `stargate hook`. |
+
 ## Security Notes
 
 - **Trust anchor:** `stargate.toml` must live outside any repository that stargate guards. The config is the root trust anchor — it defines what commands are safe, dangerous, or ambiguous. A config inside a repo could be modified by repo contents or prompt injection.
