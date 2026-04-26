@@ -4,3 +4,5 @@
 
 # Git worktrees
 .worktrees/
+/graphify-out/
+.DS_Store
