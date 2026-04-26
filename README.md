@@ -89,7 +89,7 @@ just install
 stargate init
 ```
 
-This creates `~/.config/stargate/stargate.toml` with a comprehensive default rule set (30 RED, 36 YELLOW, 17 GREEN rules) and the corpus directory. Edit the config to customize scopes and rules for your environment.
+This creates `~/.config/stargate/stargate.toml` with a comprehensive default rule set (30 RED, 36 YELLOW, 17 GREEN rules) and sets up the corpus directory. The defaults work out of the box — you can customize scopes, rules, and LLM settings later.
 
 > **Security:** `stargate.toml` MUST live outside any repository that stargate guards. A config inside a repo is writable by repo contents and therefore untrusted. The default path `~/.config/stargate/stargate.toml` is outside all repos.
 
