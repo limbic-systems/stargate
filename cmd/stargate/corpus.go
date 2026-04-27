@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -429,6 +430,9 @@ func handleCorpusRecent(args []string, configPath string, _ bool) int {
 	since := fs.String("since", "", "only show entries newer than this duration (e.g. 1h, 24h, 168h)")
 	asJSON := fs.Bool("json", false, "output as JSON array")
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
 		fmt.Fprintf(os.Stderr, "corpus recent: %v\n", err)
 		return 1
 	}
