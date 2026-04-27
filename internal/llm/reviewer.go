@@ -25,6 +25,7 @@ type ReviewResponse struct {
 	Reasoning    string   // Informational only — never influences classification
 	RiskFactors  []string // Concerns identified by the LLM
 	RequestFiles []string // Non-empty = file request, not a verdict
+	RawBody      string   // raw API response body for debug
 }
 
 // ReviewerProvider is the interface for LLM classification providers.
