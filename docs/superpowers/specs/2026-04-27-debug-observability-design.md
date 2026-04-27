@@ -1,7 +1,7 @@
 # Debug & Observability Design
 
 **Date:** 2026-04-27
-**Status:** Draft
+**Status:** Approved (panel reviewed 2026-04-27)
 **Scope:** `/test` debug enrichment, `corpus recent` CLI, `stargate explain` CLI
 
 ## Problem
@@ -52,7 +52,7 @@ type DebugInfo struct {
     Cache              *CacheDebug         `json:"cache"`
     PrecedentsInjected []PrecedentDebug    `json:"precedents_injected,omitempty"`
     RenderedPrompts    *PromptDebug        `json:"rendered_prompts,omitempty"`
-    LLMRawResponse     string             `json:"llm_raw_response,omitempty"`
+    LLMRawResponse     string             `json:"llm_raw_response,omitempty"` // raw API response body (not scrubbed — see accepted-risks.md)
 }
 
 // internal/rules/trace.go — lives in rules package to avoid circular dependency
@@ -128,7 +128,7 @@ All debug data is already computed internally during classification. The impleme
 - **`cache`** — cache lookup result already available in `reviewWithLLM`
 - **`precedents_injected`** — corpus search results already fetched in `reviewWithLLM`
 - **`rendered_prompts`** — prompt assembly happens in `llm.BuildClassifyPrompt`, needs to return the rendered strings
-- **`llm_raw_response`** — raw response body from the LLM provider, needs to be surfaced through the provider interface
+- **`llm_raw_response`** — raw HTTP response body from the Anthropic API (includes usage metadata, stop reason, model version). Not scrubbed — maximizes diagnostic value for debugging LLM issues. Surfaced through the provider interface as an additive return value
 
 #### Serialization
 
@@ -168,7 +168,7 @@ func (e *Engine) Evaluate(ctx context.Context, cmds []CommandInfo, rawCommand st
 func (e *Engine) EvaluateWithTrace(ctx context.Context, cmds []CommandInfo, rawCommand string, cwd string) *Result
 ```
 
-Both methods share the same internal evaluation logic. `EvaluateWithTrace` sets an internal flag that causes `matchRule` to append `RuleTraceEntry` values to `Result.Trace`. The existing `Evaluate` method is untouched — no new parameter, no caller changes needed.
+Both methods share the same internal evaluation logic. `EvaluateWithTrace` passes a per-invocation `evalContext` (stack-local, not stored on `Engine`) through the call chain to `matchRule`. This context carries the trace slice. The `Engine` struct is never mutated — safe for concurrent `/classify` and `/test` requests. The existing `Evaluate` method is untouched — no new parameter, no caller changes needed.
 
 The classifier calls `Evaluate` for `/classify` and `EvaluateWithTrace` for `/test` (when `DryRun=true`).
 
@@ -367,6 +367,7 @@ Sections with null data are omitted (e.g., if the decision is GREEN and no LLM w
 ### Fail-Closed Behavior
 
 - Debug enrichment only runs when `DryRun=true`. If debug population panics or errors, it does not affect `/classify` behavior.
+- Debug assembly is wrapped in `recover()` — if any debug population step panics (e.g., nil pointer in rule trace building), the classification result is still returned without the `Debug` field. The panic is logged to stderr for operator awareness.
 - Rule trace allocation failure (OOM on pathological rule count) is bounded — trace mode is only active for `/test`, which is a debugging tool not on the hot path.
 
 ### No New Attack Surface
@@ -375,3 +376,14 @@ Sections with null data are omitted (e.g., if the decision is GREEN and no LLM w
 - No new config fields. No new trust boundaries.
 - `corpus recent` is a read-only CLI query against existing data.
 - `explain` is a CLI formatting wrapper around `/test`.
+
+### Accepted Risks (see `docs/accepted-risks.md`)
+
+The following panel findings were evaluated and accepted with the rationale that localhost access already provides equivalent information via existing CLI tools (`config dump`, `config rules`, `config scopes`, `corpus search/inspect`). Degrading debug output fidelity would harm the primary use case without meaningful security improvement:
+
+- **Unscrubbed `llm_raw_response`** — raw API body included as-is for maximum diagnostic value. File retrieval content may appear. Operator already has full machine access.
+- **`RuleSnapshot` in trace entries** — full rule definitions included. `config rules` already exposes the same data.
+- **`ScopePatterns` in resolve detail** — glob patterns included. `config scopes` already exposes the same data.
+- **`rendered_prompts` in default output** — system + user prompts included without opt-in gate. `config dump` already exposes the system prompt; precedents and scopes are available via existing CLI commands.
+
+**Operational guidance:** `/test` debug output should be treated as security-sensitive material. Do not share outside operational debugging contexts (e.g., do not paste into public issue trackers or chat).

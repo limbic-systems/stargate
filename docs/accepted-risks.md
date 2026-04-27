@@ -83,3 +83,35 @@ Risks evaluated by the expert panel and accepted with documented mitigations.
 The same oracle concern applies to `stargate config rules` (prints the full rule set including patterns, flags, and scopes), `stargate config scopes` (prints the full scope inventory including trusted remote patterns and allowed paths), and `stargate config dump` (prints the effective config). All are operator-facing CLI tools running on the local machine with the same localhost trust boundary.
 
 **Panel:** M8-R2-Compliance-1, M9-R1-AppSec-5, M9-R2-Compliance-5
+
+## Unscrubbed `llm_raw_response` in `/test` Debug Output
+
+**Risk:** The `/test` debug enrichment includes the raw LLM response without passing it through `scrubber.Text()`. The LLM's file retrieval round means the response may contain file content fragments that could include secrets not caught by input scrubbing. If `/test` output is shared outside operational contexts (e.g., pasted into issue trackers or chat), sensitive content could leak.
+
+**Mitigation:** The operator debugging stargate has SSH access to the machine, which already grants full access to all files, the config, the corpus, and the running process. Scrubbing the debug output protects against the operator themselves — not a meaningful threat reduction. Degrading debug fidelity would harm the primary use case (diagnosing misclassifications on remote VMs). `/test` is localhost-only with no additional auth beyond network binding. The spec's security section documents that `/test` debug output should be treated as security-sensitive and not shared outside operational contexts.
+
+**Panel:** Debug-R1-AppSec-1, Debug-R1-Compliance-2
+
+## `RuleSnapshot` in `/test` Debug Trace Entries
+
+**Risk:** The rule trace includes a full `RuleSnapshot` (command, flags, args, patterns, scope paths, resolver config) for every rule evaluated. A compromised localhost process could enumerate the complete security policy via a single `/test` request and methodically craft evasion commands.
+
+**Mitigation:** `stargate config rules` and `stargate config dump` already expose the identical information via CLI to any process with local execution. The debug trace does not raise the bar — it makes the same data available in a more structured format. Stripping the snapshot would degrade debugging utility without meaningful security improvement. The existing "POST /test as Classification Oracle" accepted risk (M8-R2-Compliance-1) covers this threat model.
+
+**Panel:** Debug-R1-RedTeam-1, Debug-R1-AppSec-2
+
+## `ScopePatterns` in `/test` Debug Resolve Detail
+
+**Risk:** `ResolveDebug.ScopePatterns` exposes the operator's scope allowlist/blocklist glob patterns (e.g., `["*.internal.co"]`), revealing trust boundary definitions to any localhost process querying `/test`.
+
+**Mitigation:** `stargate config scopes` already prints every scope name and its patterns via CLI. The debug trace presents the same data in context (which scope was checked, what value was resolved, which patterns were attempted). No incremental exposure beyond what existing CLI tools provide.
+
+**Panel:** Debug-R1-RedTeam-3
+
+## `rendered_prompts` in Default `/test` Debug Output
+
+**Risk:** The rendered prompts include the full system prompt (classification logic, decision criteria, anti-injection fencing) plus the assembled user prompt (scrubbed command, precedents, scope context). This is a richer artifact than `config dump` alone. If `/test` output is shared outside operational contexts, an adversary could reverse-engineer classification logic and anti-injection boundaries.
+
+**Mitigation:** The system prompt is authored by the operator (or shipped as a default they can read in source). `config dump` already prints it. The rendered user prompt combines the scrubbed command (visible in corpus) with precedents (visible via `corpus search`) and scopes (visible via `config scopes`). The assembled form is more convenient but not incrementally more sensitive than the individual components. Gating behind opt-in would degrade the primary debugging workflow (diagnosing why the LLM made a specific decision requires seeing what it was asked). Localhost trust boundary applies.
+
+**Panel:** Debug-R1-RedTeam-2, Debug-R1-Compliance-1
