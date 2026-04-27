@@ -197,7 +197,7 @@ func (e *Engine) evaluate(ctx context.Context, cmds []CommandInfo, rawCommand st
 		for j := range e.red {
 			if ec != nil {
 				ec.currentLevel = "red"
-				ec.currentIndex = j
+				ec.currentIndex = e.red[j].index
 			}
 			if e.matchRule(ctx, &e.red[j], &cmds[i], rawCommand, cwd, ec) {
 				return &Result{
@@ -223,7 +223,7 @@ func (e *Engine) evaluate(ctx context.Context, cmds []CommandInfo, rawCommand st
 			for j := range e.green {
 				if ec != nil {
 					ec.currentLevel = "green"
-					ec.currentIndex = j
+					ec.currentIndex = e.green[j].index
 				}
 				if e.matchRule(ctx, &e.green[j], &cmds[i], rawCommand, cwd, ec) {
 					greenMatched[i] = true
@@ -256,7 +256,7 @@ func (e *Engine) evaluate(ctx context.Context, cmds []CommandInfo, rawCommand st
 		for j := range e.yellow {
 			if ec != nil {
 				ec.currentLevel = "yellow"
-				ec.currentIndex = j
+				ec.currentIndex = e.yellow[j].index
 			}
 			if e.matchRule(ctx, &e.yellow[j], &cmds[i], rawCommand, cwd, ec) {
 				llmReview := false
@@ -305,20 +305,28 @@ func decisionToAction(decision string) string {
 func (e *Engine) matchRule(ctx context.Context, cr *compiledRule, cmd *CommandInfo, rawCommand string, cwd string, ec *evalContext) bool {
 	r := &cr.rule
 
+	tracing := ec != nil && ec.trace
+
 	// 1. command/commands
 	if r.Command != "" {
 		if cmd.Name == "" || cmd.Name != r.Command {
-			ec.appendSkipf(cr, cmd.Name, "command", "want %q, got %q", r.Command, cmd.Name)
+			if tracing {
+				ec.appendSkipf(cr, cmd.Name, "command", "want %q, got %q", r.Command, cmd.Name)
+			}
 			return false
 		}
 	}
 	if len(r.Commands) > 0 {
 		if cmd.Name == "" {
-			ec.appendSkipf(cr, cmd.Name, "command", "want one of %v, got empty", r.Commands)
+			if tracing {
+				ec.appendSkipf(cr, cmd.Name, "command", "want one of %v, got empty", r.Commands)
+			}
 			return false
 		}
 		if !slices.Contains(r.Commands, cmd.Name) {
-			ec.appendSkipf(cr, cmd.Name, "command", "want one of %v, got %q", r.Commands, cmd.Name)
+			if tracing {
+				ec.appendSkipf(cr, cmd.Name, "command", "want one of %v, got %q", r.Commands, cmd.Name)
+			}
 			return false
 		}
 	}
@@ -326,11 +334,15 @@ func (e *Engine) matchRule(ctx context.Context, cr *compiledRule, cmd *CommandIn
 	// 2. subcommands
 	if len(r.Subcommands) > 0 {
 		if cmd.Subcommand == "" {
-			ec.appendSkipf(cr, cmd.Name, "subcommands", "want one of %v, got empty", r.Subcommands)
+			if tracing {
+				ec.appendSkipf(cr, cmd.Name, "subcommands", "want one of %v, got empty", r.Subcommands)
+			}
 			return false
 		}
 		if !slices.Contains(r.Subcommands, cmd.Subcommand) {
-			ec.appendSkipf(cr, cmd.Name, "subcommands", "want one of %v, got %q", r.Subcommands, cmd.Subcommand)
+			if tracing {
+				ec.appendSkipf(cr, cmd.Name, "subcommands", "want one of %v, got %q", r.Subcommands, cmd.Subcommand)
+			}
 			return false
 		}
 	}
@@ -338,7 +350,9 @@ func (e *Engine) matchRule(ctx context.Context, cr *compiledRule, cmd *CommandIn
 	// 3. flags (two-phase matching)
 	if len(r.Flags) > 0 {
 		if !matchFlags(r.Flags, cmd.Flags) {
-			ec.appendSkipf(cr, cmd.Name, "flags", "want any of %v in %v", r.Flags, cmd.Flags)
+			if tracing {
+				ec.appendSkipf(cr, cmd.Name, "flags", "want any of %v in %v", r.Flags, cmd.Flags)
+			}
 			return false
 		}
 	}
@@ -346,7 +360,9 @@ func (e *Engine) matchRule(ctx context.Context, cr *compiledRule, cmd *CommandIn
 	// 4. args (glob matching)
 	if len(r.Args) > 0 {
 		if !matchArgs(r.Args, cmd.Args) {
-			ec.appendSkipf(cr, cmd.Name, "args", "no arg in %v matched patterns %v", cmd.Args, r.Args)
+			if tracing {
+				ec.appendSkipf(cr, cmd.Name, "args", "no arg in %v matched patterns %v", cmd.Args, r.Args)
+			}
 			return false
 		}
 	}
@@ -354,7 +370,9 @@ func (e *Engine) matchRule(ctx context.Context, cr *compiledRule, cmd *CommandIn
 	// 5. scope
 	if cr.normalizedScope != "" {
 		if !matchScope(cr.normalizedScope, cmd.Args) {
-			ec.appendSkipf(cr, cmd.Name, "scope", "no arg in %v within scope %q", cmd.Args, r.Scope)
+			if tracing {
+				ec.appendSkipf(cr, cmd.Name, "scope", "no arg in %v within scope %q", cmd.Args, r.Scope)
+			}
 			return false
 		}
 	}
@@ -362,7 +380,9 @@ func (e *Engine) matchRule(ctx context.Context, cr *compiledRule, cmd *CommandIn
 	// 6. context
 	if r.Context != "" {
 		if !matchContext(r.Context, cmd) {
-			ec.appendSkipf(cr, cmd.Name, "context", "want context %q, not satisfied", r.Context)
+			if tracing {
+				ec.appendSkipf(cr, cmd.Name, "context", "want context %q, not satisfied", r.Context)
+			}
 			return false
 		}
 	}
@@ -370,7 +390,7 @@ func (e *Engine) matchRule(ctx context.Context, cr *compiledRule, cmd *CommandIn
 	// 7. resolve — contextual trust check via scope-bound resolver.
 	if r.Resolve != nil {
 		if e.resolverProvider == nil || e.scopeMatcher == nil {
-			if ec != nil && ec.trace {
+			if tracing {
 				ec.appendResolveSkip(cr, cmd.Name, ResolveDebug{
 					Resolver: r.Resolve.Resolver,
 					Scope:    r.Resolve.Scope,
@@ -381,7 +401,7 @@ func (e *Engine) matchRule(ctx context.Context, cr *compiledRule, cmd *CommandIn
 		}
 		resolver, ok := e.resolverProvider.Get(r.Resolve.Resolver)
 		if !ok {
-			if ec != nil && ec.trace {
+			if tracing {
 				ec.appendResolveSkip(cr, cmd.Name, ResolveDebug{
 					Resolver: r.Resolve.Resolver,
 					Scope:    r.Resolve.Scope,
@@ -392,7 +412,7 @@ func (e *Engine) matchRule(ctx context.Context, cr *compiledRule, cmd *CommandIn
 		}
 		value, resolved, err := resolver(ctx, *cmd, cwd)
 		if err != nil || !resolved {
-			if ec != nil && ec.trace {
+			if tracing {
 				errStr := ""
 				if err != nil {
 					errStr = err.Error()
@@ -403,7 +423,7 @@ func (e *Engine) matchRule(ctx context.Context, cr *compiledRule, cmd *CommandIn
 		}
 		matched := e.scopeMatcher.Match(r.Resolve.Scope, value)
 		if !matched {
-			if ec != nil && ec.trace {
+			if tracing {
 				ec.appendResolveSkip(cr, cmd.Name, e.resolveDebug(r, value, true, ""))
 			}
 			return false // value not in scope
@@ -413,12 +433,16 @@ func (e *Engine) matchRule(ctx context.Context, cr *compiledRule, cmd *CommandIn
 	// 8. pattern
 	if cr.pattern != nil {
 		if !cr.pattern.MatchString(rawCommand) {
-			ec.appendSkipf(cr, cmd.Name, "pattern", "pattern %q did not match %q", r.Pattern, rawCommand)
+			if tracing {
+				ec.appendSkipf(cr, cmd.Name, "pattern", "pattern %q did not match %q", r.Pattern, rawCommand)
+			}
 			return false
 		}
 	}
 
-	ec.appendMatch(cr, cmd.Name)
+	if tracing {
+		ec.appendMatch(cr, cmd.Name)
+	}
 	return true
 }
 
