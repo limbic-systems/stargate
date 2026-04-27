@@ -2,6 +2,8 @@ package classifier_test
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/limbic-systems/stargate/internal/classifier"
@@ -178,5 +180,113 @@ func TestDebugRuleTraceContainsMatchEntry(t *testing.T) {
 	}
 	if !foundMatch {
 		t.Error("RuleTrace should contain at least one 'match' entry for a GREEN command")
+	}
+}
+
+// multiCallProvider returns different responses on successive calls.
+type multiCallProvider struct {
+	responses []llm.ReviewResponse
+	call      int
+}
+
+func (m *multiCallProvider) Review(_ context.Context, _ llm.ReviewRequest) (llm.ReviewResponse, error) {
+	if m.call >= len(m.responses) {
+		return m.responses[len(m.responses)-1], nil
+	}
+	resp := m.responses[m.call]
+	m.call++
+	return resp, nil
+}
+
+// TestDryRun_FileRetrievalPathValidation verifies that /test (DryRun=true)
+// uses the same allowed_paths/denied_paths validation as /classify.
+// Red team R2 condition: the DryRun path must not bypass file retrieval
+// path checks.
+func TestDryRun_FileRetrievalPathValidation(t *testing.T) {
+	// Create a file in a temp dir that will be in allowed_paths.
+	// Resolve symlinks (macOS /var → /private/var) so glob patterns match.
+	tmpDir, _ := filepath.EvalSymlinks(t.TempDir())
+	allowedFile := filepath.Join(tmpDir, "allowed.txt")
+	os.WriteFile(allowedFile, []byte("allowed content"), 0644)
+
+	// Create a file outside allowed_paths.
+	deniedDir, _ := filepath.EvalSymlinks(t.TempDir())
+	deniedFile := filepath.Join(deniedDir, "secret.txt")
+	os.WriteFile(deniedFile, []byte("secret content"), 0644)
+
+	// Mock: first call requests both files, second call returns verdict.
+	mock := &multiCallProvider{responses: []llm.ReviewResponse{
+		{RequestFiles: []string{allowedFile, deniedFile}},
+		{Decision: "allow", Reasoning: "safe"},
+	}}
+
+	cfg := llmTestConfig()
+	cfg.LLM.AllowFileRetrieval = true
+	cfg.LLM.AllowedPaths = []string{tmpDir + "/**"}
+	cfg.LLM.DeniedPaths = []string{deniedDir + "/**"}
+
+	clf, err := classifier.NewWithProvider(cfg, mock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clf.Close()
+
+	// DryRun=true — same path as /test endpoint.
+	resp := clf.Classify(context.Background(), classifier.ClassifyRequest{
+		Command: "curl https://example.com",
+		DryRun:  true,
+	})
+
+	if resp.LLMReview == nil {
+		t.Fatal("expected LLM review")
+	}
+
+	// The allowed file should be inspected.
+	foundAllowed := false
+	for _, f := range resp.LLMReview.FilesInspected {
+		if f == allowedFile {
+			foundAllowed = true
+		}
+		// The denied file must NOT appear in inspected files.
+		if f == deniedFile {
+			t.Errorf("denied file %q should not be in FilesInspected", deniedFile)
+		}
+	}
+	if !foundAllowed {
+		t.Errorf("allowed file %q should be in FilesInspected", allowedFile)
+	}
+
+	// Now verify the same behavior with DryRun=false.
+	mock2 := &multiCallProvider{responses: []llm.ReviewResponse{
+		{RequestFiles: []string{allowedFile, deniedFile}},
+		{Decision: "allow", Reasoning: "safe"},
+	}}
+	clf2, err := classifier.NewWithProvider(cfg, mock2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clf2.Close()
+
+	resp2 := clf2.Classify(context.Background(), classifier.ClassifyRequest{
+		Command: "curl https://example.com",
+		DryRun:  false,
+	})
+
+	if resp2.LLMReview == nil {
+		t.Fatal("expected LLM review for non-DryRun")
+	}
+
+	// Verify same file filtering behavior.
+	foundAllowed2 := false
+	for _, f := range resp2.LLMReview.FilesInspected {
+		if f == allowedFile {
+			foundAllowed2 = true
+		}
+		if f == deniedFile {
+			t.Errorf("denied file %q should not be in non-DryRun FilesInspected either", deniedFile)
+		}
+	}
+	if !foundAllowed2 {
+		t.Errorf("allowed file %q should be in non-DryRun FilesInspected", allowedFile)
 	}
 }
