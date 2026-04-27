@@ -88,9 +88,9 @@ The same oracle concern applies to `stargate config rules` (prints the full rule
 
 **Risk:** The `/test` debug enrichment includes the raw LLM response without passing it through `scrubber.Text()`. The LLM's file retrieval round means the response may contain file content fragments that could include secrets not caught by input scrubbing. If `/test` output is shared outside operational contexts (e.g., pasted into issue trackers or chat), sensitive content could leak.
 
-**Mitigation:** The operator debugging stargate has SSH access to the machine, which already grants full access to all files, the config, the corpus, and the running process. Scrubbing the debug output protects against the operator themselves — not a meaningful threat reduction. Degrading debug fidelity would harm the primary use case (diagnosing misclassifications on remote VMs). `/test` is localhost-only with no additional auth beyond network binding. The spec's security section documents that `/test` debug output should be treated as security-sensitive and not shared outside operational contexts.
+**Mitigation:** The operator debugging stargate has SSH access to the machine, which already grants full access to all files, the config, the corpus, and the running process. Scrubbing the debug output protects against the operator themselves — not a meaningful threat reduction. Degrading debug fidelity would harm the primary use case (diagnosing misclassifications on remote VMs). `/test` is localhost-only with no additional auth beyond network binding. The spec's security section documents that `/test` debug output should be treated as security-sensitive and not shared outside operational contexts. File content that reaches the LLM response has already passed `allowed_paths`/`denied_paths` validation during file retrieval, bounding the content the LLM can echo.
 
-**Panel:** Debug-R1-AppSec-1, Debug-R1-Compliance-2
+**Panel:** Debug-R1-AppSec-1, Debug-R1-Compliance-2, Debug-R2-RedTeam-1, Debug-R2-Compliance-1
 
 ## `RuleSnapshot` in `/test` Debug Trace Entries
 
