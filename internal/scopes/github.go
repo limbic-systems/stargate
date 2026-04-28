@@ -3,12 +3,14 @@ package scopes
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 
 	"github.com/limbic-systems/stargate/internal/types"
 )
@@ -156,7 +158,7 @@ func ownerFromGitConfig(ctx context.Context, cwd string) (string, bool, error) {
 	}
 
 	f, err := os.Open(configPath)
-	if err != nil && (os.IsNotExist(err) || isNotDirectory(err)) {
+	if err != nil && (os.IsNotExist(err) || errors.Is(err, syscall.ENOTDIR)) {
 		// In a git worktree, .git is a file containing "gitdir: <path>".
 		// Follow the pointer to find the main repo's config.
 		configPath, err = resolveWorktreeConfig(cwd)
@@ -188,12 +190,6 @@ func ownerFromGitConfig(ctx context.Context, cwd string) (string, bool, error) {
 	return owner, true, nil
 }
 
-// isNotDirectory checks if an error is ENOTDIR — returned when a path
-// component is a file, not a directory (e.g., .git/config when .git is a file).
-func isNotDirectory(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "not a directory")
-}
-
 // resolveWorktreeConfig follows a git worktree .git file pointer to find
 // the main repo's config. Returns "" if not a worktree or unresolvable.
 func resolveWorktreeConfig(cwd string) (string, error) {
@@ -211,24 +207,20 @@ func resolveWorktreeConfig(cwd string) (string, error) {
 	if !filepath.IsAbs(gitdir) {
 		gitdir = filepath.Join(cwd, gitdir)
 	}
-	// gitdir points to .git/worktrees/<name> — walk up to .git/config.
-	// Resolve symlinks first to normalize the path.
+	// gitdir points to .git/worktrees/<name>. Resolve symlinks to normalize,
+	// then go up two levels to reach the .git directory.
 	gitdir, err = filepath.EvalSymlinks(gitdir)
 	if err != nil {
 		return "", nil
 	}
-	// Walk up until we find a directory containing "config".
-	dir := gitdir
-	for i := 0; i < 5; i++ {
-		candidate := filepath.Join(dir, "config")
-		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-			return candidate, nil
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			break
-		}
-		dir = parent
+	dotGitDir := filepath.Dir(filepath.Dir(gitdir))
+	// Validate we landed in an actual .git directory (must contain HEAD).
+	if _, err := os.Stat(filepath.Join(dotGitDir, "HEAD")); err != nil {
+		return "", nil
+	}
+	candidate := filepath.Join(dotGitDir, "config")
+	if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+		return candidate, nil
 	}
 	return "", nil
 }

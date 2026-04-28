@@ -457,6 +457,9 @@ func TestGitWorktreeResolvesOwner(t *testing.T) {
 	url = https://github.com/limbic-systems/codetainer.git
 `)
 
+	// The .git dir needs a HEAD file for validation.
+	os.WriteFile(filepath.Join(mainRepo, ".git", "HEAD"), []byte("ref: refs/heads/main\n"), 0o644)
+
 	// Create a worktree directory with a .git file pointing to the main repo.
 	worktree := t.TempDir()
 	worktreeGitDir := filepath.Join(mainRepo, ".git", "worktrees", "my-worktree")
@@ -489,6 +492,9 @@ func TestGitWorktreeRelativePath(t *testing.T) {
 	writeGitConfig(t, mainRepo, `[remote "origin"]
 	url = git@github.com:myorg/myrepo.git
 `)
+
+	// The .git dir needs a HEAD file for validation.
+	os.WriteFile(filepath.Join(mainRepo, ".git", "HEAD"), []byte("ref: refs/heads/main\n"), 0o644)
 
 	// Create worktree inside the main repo (relative gitdir path).
 	worktreeGitDir := filepath.Join(mainRepo, ".git", "worktrees", "feature")
