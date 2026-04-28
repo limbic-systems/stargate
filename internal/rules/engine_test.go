@@ -329,12 +329,15 @@ func TestExcludeFlags(t *testing.T) {
 		if result.Decision != "yellow" {
 			t.Errorf("expected yellow, got %s (reason: %s)", result.Decision, result.Reason)
 		}
+		if !result.LLMReview {
+			t.Error("expected LLMReview=true for sed --in-place")
+		}
 	})
 }
 
 func TestGitRemoteReadOnly(t *testing.T) {
 	greenRules := []config.Rule{
-		{Command: "git", Subcommands: []string{"remote"}, Args: []string{"get-url", "show"}, Reason: "read-only remote"},
+		{Command: "git", Subcommands: []string{"remote"}, Pattern: `^\s*git\s+remote\s+(get-url|show)\s`, Reason: "read-only remote"},
 	}
 	yellowRules := []config.Rule{
 		{Command: "git", Subcommands: []string{"remote"}, LLMReview: boolPtr(true), Reason: "remote mutation"},
@@ -358,12 +361,31 @@ func TestGitRemoteReadOnly(t *testing.T) {
 		}
 	})
 
-	t.Run("git remote add is YELLOW", func(t *testing.T) {
+	t.Run("git remote add is YELLOW with LLM review", func(t *testing.T) {
 		result := engine.Evaluate(context.Background(),
 			[]CommandInfo{
 				{Name: "git", Subcommand: "remote", Args: []string{"add", "evil", "https://evil.com/repo"}},
 			},
 			"git remote add evil https://evil.com/repo",
+			"",
+		)
+		if result.Decision != "yellow" {
+			t.Errorf("expected yellow, got %s (reason: %s)", result.Decision, result.Reason)
+		}
+		if !result.LLMReview {
+			t.Errorf("expected LLMReview true, got false (reason: %s)", result.Reason)
+		}
+		if result.Reason != "remote mutation" {
+			t.Errorf("expected reason %q, got %q", "remote mutation", result.Reason)
+		}
+	})
+
+	t.Run("git remote add show is YELLOW not GREEN (positional safety)", func(t *testing.T) {
+		result := engine.Evaluate(context.Background(),
+			[]CommandInfo{
+				{Name: "git", Subcommand: "remote", Args: []string{"add", "show", "https://example.com/repo"}},
+			},
+			"git remote add show https://example.com/repo",
 			"",
 		)
 		if result.Decision != "yellow" {
