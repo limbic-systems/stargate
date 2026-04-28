@@ -302,6 +302,22 @@ func TestExcludeFlags(t *testing.T) {
 		}
 	})
 
+	t.Run("sed -i.bak is YELLOW (excluded from green)", func(t *testing.T) {
+		result := engine.Evaluate(context.Background(),
+			[]CommandInfo{
+				{Name: "sed", Flags: []string{"-i.bak"}, Args: []string{"s/foo/bar/", "file.txt"}},
+			},
+			"sed -i.bak 's/foo/bar/' file.txt",
+			"",
+		)
+		if result.Decision != "yellow" {
+			t.Errorf("expected yellow, got %s (reason: %s)", result.Decision, result.Reason)
+		}
+		if !result.LLMReview {
+			t.Error("expected LLMReview=true for sed -i.bak")
+		}
+	})
+
 	t.Run("sed --in-place is YELLOW (excluded from green)", func(t *testing.T) {
 		result := engine.Evaluate(context.Background(),
 			[]CommandInfo{
