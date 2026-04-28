@@ -316,6 +316,46 @@ func TestExcludeFlags(t *testing.T) {
 	})
 }
 
+func TestGitRemoteReadOnly(t *testing.T) {
+	greenRules := []config.Rule{
+		{Command: "git", Subcommands: []string{"remote"}, Args: []string{"get-url", "show"}, Reason: "read-only remote"},
+	}
+	yellowRules := []config.Rule{
+		{Command: "git", Subcommands: []string{"remote"}, LLMReview: boolPtr(true), Reason: "remote mutation"},
+	}
+	cfg := testConfig(nil, greenRules, yellowRules, "yellow")
+	engine, err := NewEngine(cfg)
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+
+	t.Run("git remote get-url is GREEN", func(t *testing.T) {
+		result := engine.Evaluate(context.Background(),
+			[]CommandInfo{
+				{Name: "git", Subcommand: "remote", Args: []string{"get-url", "origin"}},
+			},
+			"git remote get-url origin",
+			"",
+		)
+		if result.Decision != "green" {
+			t.Errorf("expected green, got %s (reason: %s)", result.Decision, result.Reason)
+		}
+	})
+
+	t.Run("git remote add is YELLOW", func(t *testing.T) {
+		result := engine.Evaluate(context.Background(),
+			[]CommandInfo{
+				{Name: "git", Subcommand: "remote", Args: []string{"add", "evil", "https://evil.com/repo"}},
+			},
+			"git remote add evil https://evil.com/repo",
+			"",
+		)
+		if result.Decision != "yellow" {
+			t.Errorf("expected yellow, got %s (reason: %s)", result.Decision, result.Reason)
+		}
+	})
+}
+
 func TestEvaluate_YellowMatching(t *testing.T) {
 	yellowRules := []config.Rule{
 		{Command: "curl", LLMReview: boolPtr(true), Reason: "network access"},
