@@ -227,8 +227,8 @@ reason = "Standard git workflow operations (force-push caught by RED rule above)
 [[rules.green]]
 commands = ["ls", "cat", "head", "tail", "wc", "sort", "uniq", "grep", "rg",
             "file", "stat", "du", "df", "which", "whereis", "type",
-            "true", "false", "test", "[", "find"]
-reason = "Read-only filesystem and text inspection utilities."
+            "true", "false", "test", "[", "find", "echo", "printf"]
+reason = "Read-only filesystem, text inspection, and output utilities."
 
 [[rules.green]]
 commands = ["bash", "sh", "zsh", "dash"]
@@ -504,11 +504,6 @@ llm_review = true
 reason = "Opens URLs or files with default handlers — could launch phishing pages."
 
 # --- Misc ---
-
-[[rules.yellow]]
-commands = ["echo", "printf"]
-llm_review = false
-reason = "Output commands — ask user when used standalone (redirections handled by parser)."
 
 # ---------------------------------------------------------------------------
 # LLM Reviewer Configuration
