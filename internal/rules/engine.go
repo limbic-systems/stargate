@@ -357,6 +357,16 @@ func (e *Engine) matchRule(ctx context.Context, cr *compiledRule, cmd *CommandIn
 		}
 	}
 
+	// 3b. exclude_flags — reject if any excluded flag is present.
+	if len(r.ExcludeFlags) > 0 {
+		if matchFlags(r.ExcludeFlags, cmd.Flags) {
+			if tracing {
+				ec.appendSkipf(cr, cmd.Name, "exclude_flags", "excluded flag found in %v", cmd.Flags)
+			}
+			return false
+		}
+	}
+
 	// 4. args (glob matching)
 	if len(r.Args) > 0 {
 		if !matchArgs(r.Args, cmd.Args) {
@@ -526,6 +536,14 @@ func matchFlags(ruleFlags, cmdFlags []string) bool {
 			}
 			if allPresent {
 				return true
+			}
+			// Short flags with attached values (e.g., -i.bak for sed) are not
+			// decomposable and land in literalSet. Check if any literal starts
+			// with this rule flag as a prefix so that -i matches -i.bak.
+			for lit := range literalSet {
+				if strings.HasPrefix(lit, rf) {
+					return true
+				}
 			}
 		} else {
 			if literalSet[rf] {
