@@ -458,7 +458,9 @@ func TestGitWorktreeResolvesOwner(t *testing.T) {
 `)
 
 	// The .git dir needs a HEAD file for validation.
-	os.WriteFile(filepath.Join(mainRepo, ".git", "HEAD"), []byte("ref: refs/heads/main\n"), 0o644)
+	if err := os.WriteFile(filepath.Join(mainRepo, ".git", "HEAD"), []byte("ref: refs/heads/main\n"), 0o644); err != nil {
+		t.Fatalf("write HEAD: %v", err)
+	}
 
 	// Create a worktree directory with a .git file pointing to the main repo.
 	worktree := t.TempDir()
@@ -494,7 +496,9 @@ func TestGitWorktreeRelativePath(t *testing.T) {
 `)
 
 	// The .git dir needs a HEAD file for validation.
-	os.WriteFile(filepath.Join(mainRepo, ".git", "HEAD"), []byte("ref: refs/heads/main\n"), 0o644)
+	if err := os.WriteFile(filepath.Join(mainRepo, ".git", "HEAD"), []byte("ref: refs/heads/main\n"), 0o644); err != nil {
+		t.Fatalf("write HEAD: %v", err)
+	}
 
 	// Create worktree inside the main repo (relative gitdir path).
 	worktreeGitDir := filepath.Join(mainRepo, ".git", "worktrees", "feature")
