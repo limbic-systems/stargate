@@ -159,7 +159,8 @@ type Rule struct {
 	Command     string         `toml:"command"`
 	Commands    []string       `toml:"commands"`
 	Subcommands []string       `toml:"subcommands"`
-	Flags       []string       `toml:"flags"`
+	Flags        []string       `toml:"flags"`
+	ExcludeFlags []string       `toml:"exclude_flags"`
 	Args        []string       `toml:"args"`
 	Pattern     string         `toml:"pattern"`
 	Scope       string         `toml:"scope"`

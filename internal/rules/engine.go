@@ -357,6 +357,16 @@ func (e *Engine) matchRule(ctx context.Context, cr *compiledRule, cmd *CommandIn
 		}
 	}
 
+	// 3b. exclude_flags — reject if any excluded flag is present.
+	if len(r.ExcludeFlags) > 0 {
+		if matchFlags(r.ExcludeFlags, cmd.Flags) {
+			if tracing {
+				ec.appendSkipf(cr, cmd.Name, "exclude_flags", "excluded flag found in %v", cmd.Flags)
+			}
+			return false
+		}
+	}
+
 	// 4. args (glob matching)
 	if len(r.Args) > 0 {
 		if !matchArgs(r.Args, cmd.Args) {

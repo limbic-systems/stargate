@@ -23,7 +23,8 @@ type RuleSnapshot struct {
 	Command     string       `json:"command,omitempty"`
 	Commands    []string     `json:"commands,omitempty"`
 	Subcommands []string     `json:"subcommands,omitempty"`
-	Flags       []string     `json:"flags,omitempty"`
+	Flags        []string     `json:"flags,omitempty"`
+	ExcludeFlags []string     `json:"exclude_flags,omitempty"`
 	Args        []string     `json:"args,omitempty"`
 	Pattern     string       `json:"pattern,omitempty"`
 	Scope       string       `json:"scope,omitempty"`
@@ -56,7 +57,8 @@ func snapshotFromRule(r config.Rule) RuleSnapshot {
 		Command:     r.Command,
 		Commands:    r.Commands,
 		Subcommands: r.Subcommands,
-		Flags:       r.Flags,
+		Flags:        r.Flags,
+		ExcludeFlags: r.ExcludeFlags,
 		Args:        r.Args,
 		Pattern:     r.Pattern,
 		Scope:       r.Scope,

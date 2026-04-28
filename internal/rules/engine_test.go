@@ -258,6 +258,64 @@ func TestEvaluate_GreenMatching(t *testing.T) {
 	}
 }
 
+func TestExcludeFlags(t *testing.T) {
+	greenRules := []config.Rule{
+		{Command: "sed", ExcludeFlags: []string{"-i", "--in-place"}, Reason: "stream sed"},
+		{Command: "head", Reason: "safe head"},
+	}
+	yellowRules := []config.Rule{
+		{Command: "sed", Flags: []string{"-i", "--in-place"}, LLMReview: boolPtr(true), Reason: "in-place sed"},
+	}
+	cfg := testConfig(nil, greenRules, yellowRules, "yellow")
+	engine, err := NewEngine(cfg)
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+
+	t.Run("sed stream to file is GREEN", func(t *testing.T) {
+		result := engine.Evaluate(context.Background(),
+			[]CommandInfo{
+				{Name: "sed", Args: []string{"s/- \\[ \\]/- [x]/g", "/tmp/impl-plan.md"}},
+				{Name: "head", Flags: []string{"-5"}},
+			},
+			`sed 's/- \[ \]/- [x]/g' /tmp/impl-plan.md > /tmp/impl-plan-done.md && head -5 /tmp/impl-plan-done.md`,
+			"",
+		)
+		if result.Decision != "green" {
+			t.Errorf("expected green, got %s (reason: %s)", result.Decision, result.Reason)
+		}
+	})
+
+	t.Run("sed -i is YELLOW (excluded from green)", func(t *testing.T) {
+		result := engine.Evaluate(context.Background(),
+			[]CommandInfo{
+				{Name: "sed", Flags: []string{"-i"}, Args: []string{"s/foo/bar/", "file.txt"}},
+			},
+			"sed -i 's/foo/bar/' file.txt",
+			"",
+		)
+		if result.Decision != "yellow" {
+			t.Errorf("expected yellow, got %s (reason: %s)", result.Decision, result.Reason)
+		}
+		if !result.LLMReview {
+			t.Error("expected LLMReview=true for sed -i")
+		}
+	})
+
+	t.Run("sed --in-place is YELLOW (excluded from green)", func(t *testing.T) {
+		result := engine.Evaluate(context.Background(),
+			[]CommandInfo{
+				{Name: "sed", Flags: []string{"--in-place"}, Args: []string{"s/foo/bar/", "file.txt"}},
+			},
+			"sed --in-place 's/foo/bar/' file.txt",
+			"",
+		)
+		if result.Decision != "yellow" {
+			t.Errorf("expected yellow, got %s (reason: %s)", result.Decision, result.Reason)
+		}
+	})
+}
+
 func TestEvaluate_YellowMatching(t *testing.T) {
 	yellowRules := []config.Rule{
 		{Command: "curl", LLMReview: boolPtr(true), Reason: "network access"},

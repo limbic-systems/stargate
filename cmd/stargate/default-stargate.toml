@@ -231,6 +231,11 @@ commands = ["ls", "cat", "head", "tail", "wc", "sort", "uniq", "grep", "rg",
 reason = "Read-only filesystem, text inspection, and output utilities."
 
 [[rules.green]]
+command = "sed"
+exclude_flags = ["-i", "--in-place"]
+reason = "Stream editor without in-place modification (sed -i caught by YELLOW rule with LLM review)."
+
+[[rules.green]]
 commands = ["bash", "sh", "zsh", "dash"]
 flags = ["-n", "--noexec"]
 reason = "Shell syntax check only — parses but never executes."
@@ -371,11 +376,6 @@ command = "sed"
 flags = ["-i", "--in-place"]
 llm_review = true
 reason = "In-place file modification — LLM reviews the expression and target."
-
-[[rules.yellow]]
-command = "sed"
-llm_review = false
-reason = "Text stream editor — ask user (sed -i caught above with LLM review)."
 
 [[rules.yellow]]
 command = "tee"
