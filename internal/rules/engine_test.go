@@ -178,6 +178,7 @@ func TestEvaluate_GreenMatching(t *testing.T) {
 		{Command: "ls", Reason: "safe list"},
 		{Command: "cat", Reason: "safe cat"},
 		{Command: "grep", Reason: "safe grep"},
+		{Commands: []string{"echo", "printf"}, Reason: "safe output"},
 	}
 	cfg := testConfig(nil, greenRules, nil, "")
 	engine, err := NewEngine(cfg)
@@ -219,6 +220,15 @@ func TestEvaluate_GreenMatching(t *testing.T) {
 			name:      "ls -la is GREEN",
 			cmds:      []CommandInfo{{Name: "ls", Flags: []string{"-la"}}},
 			raw:       "ls -la",
+			wantGreen: true,
+		},
+		{
+			name: "cat file || echo fallback is GREEN (both match green)",
+			cmds: []CommandInfo{
+				{Name: "cat", Args: []string{"/workspace/repo/.gitignore"}},
+				{Name: "echo", Args: []string{"No .gitignore found"}},
+			},
+			raw:       `cat /workspace/repo/.gitignore 2>/dev/null || echo "No .gitignore found"`,
 			wantGreen: true,
 		},
 		{
