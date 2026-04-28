@@ -3,12 +3,14 @@ package scopes
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 
 	"github.com/limbic-systems/stargate/internal/types"
 )
@@ -156,6 +158,15 @@ func ownerFromGitConfig(ctx context.Context, cwd string) (string, bool, error) {
 	}
 
 	f, err := os.Open(configPath)
+	if err != nil && (os.IsNotExist(err) || errors.Is(err, syscall.ENOTDIR)) {
+		// In a git worktree, .git is a file containing "gitdir: <path>".
+		// Follow the pointer to find the main repo's config.
+		configPath, err = resolveWorktreeConfig(cwd)
+		if err != nil || configPath == "" {
+			return "", false, nil
+		}
+		f, err = os.Open(configPath)
+	}
 	if err != nil {
 		if os.IsNotExist(err) {
 			return "", false, nil
@@ -177,6 +188,50 @@ func ownerFromGitConfig(ctx context.Context, cwd string) (string, bool, error) {
 		return "", false, nil
 	}
 	return owner, true, nil
+}
+
+// resolveWorktreeConfig follows a git worktree .git file pointer to find
+// the main repo's config. Returns "" if not a worktree or unresolvable.
+func resolveWorktreeConfig(cwd string) (string, error) {
+	dotGit := filepath.Join(cwd, ".git")
+	data, err := os.ReadFile(dotGit)
+	if err != nil {
+		return "", err
+	}
+	line := strings.TrimSpace(string(data))
+	gitdir, ok := strings.CutPrefix(line, "gitdir: ")
+	if !ok {
+		return "", nil
+	}
+	gitdir = strings.TrimSpace(gitdir)
+	if !filepath.IsAbs(gitdir) {
+		gitdir = filepath.Join(cwd, gitdir)
+	}
+	gitdir, err = filepath.EvalSymlinks(gitdir)
+	if err != nil {
+		return "", nil
+	}
+	// Distinguish worktrees from submodules by parent directory name.
+	// Worktree:  .git/worktrees/<name> → config is at .git/config (two levels up)
+	// Submodule: .git/modules/<name>   → config is at .git/modules/<name>/config (in gitdir itself)
+	parent := filepath.Dir(gitdir)
+	var configDir string
+	switch filepath.Base(parent) {
+	case "worktrees":
+		configDir = filepath.Dir(parent)
+	case "modules":
+		configDir = gitdir
+	default:
+		return "", nil
+	}
+	if _, err := os.Stat(filepath.Join(configDir, "HEAD")); err != nil {
+		return "", nil
+	}
+	candidate := filepath.Join(configDir, "config")
+	if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+		return candidate, nil
+	}
+	return "", nil
 }
 
 // parseGitConfigOriginURL reads an INI-style git config and extracts the URL
