@@ -8,9 +8,13 @@ import "context"
 // ReviewRequest carries structured prompt components to the provider.
 // SystemPrompt and UserContent are logically distinct and MUST remain so:
 //   - SDK providers map them to the API's native system/messages fields.
-//   - Subprocess providers serialize them into a single stdin payload in
-//     deterministic order (system first, then user) with an explicit
-//     delimiter, preserving the boundary between trusted and untrusted content.
+//   - Subprocess providers pass SystemPrompt via --system-prompt flag and
+//     UserContent via stdin, preserving the trust boundary between
+//     classifier instructions and untrusted command data.
+//
+// Note: MaxTokens and Temperature are honored by SDK providers but cannot
+// be set via the claude CLI subprocess path (no flags available). The
+// subprocess relies on Claude Code defaults for these parameters.
 type ReviewRequest struct {
 	SystemPrompt string  // Security instructions and decision framework
 	UserContent  string  // Untrusted data: command, AST, files, precedents, scopes

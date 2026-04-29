@@ -108,6 +108,81 @@ func TestParseResponse_NestedJSONInReasoning(t *testing.T) {
 	}
 }
 
+func TestSubprocessArgs(t *testing.T) {
+	req := ReviewRequest{
+		SystemPrompt: "You are a classifier.",
+		UserContent:  "echo hello",
+		Model:        "claude-sonnet-4-6",
+		MaxTokens:    512,
+		Temperature:  0.0,
+	}
+	args := subprocessArgs(req)
+
+	// --system-prompt must carry the system prompt (not concatenated into stdin).
+	foundSysPrompt := false
+	for i, a := range args {
+		if a == "--system-prompt" {
+			if i+1 >= len(args) {
+				t.Fatal("--system-prompt flag has no value")
+			}
+			if args[i+1] != req.SystemPrompt {
+				t.Errorf("--system-prompt value = %q, want %q", args[i+1], req.SystemPrompt)
+			}
+			foundSysPrompt = true
+		}
+	}
+	if !foundSysPrompt {
+		t.Error("args missing --system-prompt flag")
+	}
+
+	// Verify flag values — these are security-relevant:
+	// --max-turns must be "1" to prevent multi-turn agentic behavior,
+	// --model must match the request to avoid model substitution.
+	flagValues := map[string]string{"--model": "", "--max-turns": ""}
+	for i, a := range args {
+		if _, ok := flagValues[a]; ok {
+			if i+1 >= len(args) {
+				t.Fatalf("%s flag has no value", a)
+			}
+			flagValues[a] = args[i+1]
+		}
+	}
+	if v := flagValues["--model"]; v != req.Model {
+		t.Errorf("--model value = %q, want %q", v, req.Model)
+	}
+	if v := flagValues["--max-turns"]; v != "1" {
+		t.Errorf("--max-turns value = %q, want %q", v, "1")
+	}
+
+	// Must include -p and trailing - for stdin.
+	foundP := false
+	for _, a := range args {
+		if a == "-p" {
+			foundP = true
+		}
+	}
+	if !foundP {
+		t.Error("args missing -p flag")
+	}
+
+	// Trailing arg must be "-" (stdin marker).
+	if args[len(args)-1] != "-" {
+		t.Errorf("last arg = %q, want %q (stdin marker)", args[len(args)-1], "-")
+	}
+
+	// SystemPrompt must NOT appear in UserContent position (stdin).
+	// This is the trust boundary: system prompt via flag, user content via stdin.
+	for i, a := range args {
+		if a == "-p" || a == "--model" || a == "--max-turns" || a == "--system-prompt" || a == "-" {
+			continue
+		}
+		if i > 0 && (args[i-1] == "--model" || args[i-1] == "--max-turns" || args[i-1] == "--system-prompt") {
+			continue // value of a flag
+		}
+		t.Errorf("unexpected arg at position %d: %q", i, a)
+	}
+}
+
 func TestNewAnthropicProvider_NoAuth(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "")
