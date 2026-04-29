@@ -135,17 +135,34 @@ func TestSubprocessArgs(t *testing.T) {
 		t.Error("args missing --system-prompt flag")
 	}
 
-	// Must include -p, --model, --max-turns 1, and trailing - for stdin.
-	want := map[string]bool{"-p": false, "--model": false, "--max-turns": false, "-": false}
-	for _, a := range args {
-		if _, ok := want[a]; ok {
-			want[a] = true
+	// Verify flag values — these are security-relevant:
+	// --max-turns must be "1" to prevent multi-turn agentic behavior,
+	// --model must match the request to avoid model substitution.
+	flagValues := map[string]string{"--model": "", "--max-turns": ""}
+	for i, a := range args {
+		if _, ok := flagValues[a]; ok {
+			if i+1 >= len(args) {
+				t.Fatalf("%s flag has no value", a)
+			}
+			flagValues[a] = args[i+1]
 		}
 	}
-	for flag, found := range want {
-		if !found {
-			t.Errorf("args missing required flag %q", flag)
+	if v := flagValues["--model"]; v != req.Model {
+		t.Errorf("--model value = %q, want %q", v, req.Model)
+	}
+	if v := flagValues["--max-turns"]; v != "1" {
+		t.Errorf("--max-turns value = %q, want %q", v, "1")
+	}
+
+	// Must include -p and trailing - for stdin.
+	foundP := false
+	for _, a := range args {
+		if a == "-p" {
+			foundP = true
 		}
+	}
+	if !foundP {
+		t.Error("args missing -p flag")
 	}
 
 	// Trailing arg must be "-" (stdin marker).

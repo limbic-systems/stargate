@@ -383,33 +383,20 @@ extra_patterns = [
   'pypi-[a-zA-Z0-9]+',
 ]
 
-# System prompt for the LLM reviewer. Supports {{variables}}:
-# {{command}}       — the raw command string (wrapped in <untrusted_command> tags)
-# {{ast_summary}}   — structured summary of parsed AST (wrapped in <parsed_structure> tags)
-# {{cwd}}           — current working directory
-# {{rule_reason}}   — the reason from the YELLOW rule that matched
-# {{file_contents}} — contents of requested files (wrapped in <untrusted_file_contents> tags)
-# {{precedents}}    — similar past classifications (wrapped in <precedent_context> tags)
-# {{scopes}}        — operator-defined trusted scopes (for contextual reasoning)
+# System prompt for the LLM reviewer.
 #
-# NOTE: The {{command}} variable is populated with a scrubbed version of the
-# command — secret values in environment assignments and common token patterns
-# are redacted before prompt construction. The original command is never sent
-# to the LLM. See §7.4 for details on the scrubbing pass.
+# Leave empty to use the built-in DefaultSystemPrompt (recommended).
 #
-# XML FENCE ESCAPING: Before interpolation, all closing tag sequences matching
-# the fence tag names (e.g., </untrusted_command>, </untrusted_file_contents>,
-# </parsed_structure>, </precedent_context>) are stripped from the interpolated
-# content. This prevents an attacker from breaking out of the fenced block by
-# embedding closing tags in the command string or file contents.
-# system_prompt: Leave empty to use the built-in DefaultSystemPrompt.
+# Only two placeholders are substituted in the system prompt:
+#   {{rule_reason}} — the reason from the YELLOW rule that matched
+#   {{cwd}}         — current working directory
+#
 # Custom system prompts MUST contain only instructions — not data sections.
 # Data sections (command, AST, file contents, precedents, scopes) are
 # injected by the code into the user content message via userContentTemplate.
-# Including data placeholders ({{command}}, {{file_contents}}, etc.) in the
-# system prompt will NOT be replaced and produces confusing duplicate sections.
+# Placeholders like {{command}}, {{file_contents}}, {{precedents}}, etc. are
+# NOT replaced in the system prompt and will appear as literal text.
 #
-# Only {{rule_reason}} and {{cwd}} are substituted in the system prompt.
 # See internal/llm/prompt.go DefaultSystemPrompt for the reference shape.
 
 # ---------------------------------------------------------------------------
