@@ -1219,3 +1219,99 @@ func TestResolveUndefinedResolver(t *testing.T) {
 		t.Fatal("expected error for undefined resolver, got nil")
 	}
 }
+
+func TestPrintenvEnvClassification(t *testing.T) {
+	greenRules := []config.Rule{
+		{Commands: []string{"date", "cal", "uname", "hostname", "id", "whoami"}, Reason: "System info queries (read-only)."},
+		{Command: "grep", Reason: "safe grep"},
+	}
+	yellowRules := []config.Rule{
+		{Command: "env", LLMReview: boolPtr(true), Reason: "env can execute commands and modify environment (PATH, LD_PRELOAD)."},
+		{Command: "printenv", LLMReview: boolPtr(true), Reason: "printenv dumps all environment variables including secrets."},
+	}
+	cfg := testConfig(nil, greenRules, yellowRules, "yellow")
+	engine, err := NewEngine(cfg)
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+
+	tests := []struct {
+		name       string
+		cmds       []CommandInfo
+		raw        string
+		wantDecision string
+		wantLLM    bool
+	}{
+		{
+			name:         "bare printenv is YELLOW with LLM review",
+			cmds:         []CommandInfo{{Name: "printenv"}},
+			raw:          "printenv",
+			wantDecision: "yellow",
+			wantLLM:      true,
+		},
+		{
+			name:         "printenv HOME is YELLOW with LLM review",
+			cmds:         []CommandInfo{{Name: "printenv", Args: []string{"HOME"}}},
+			raw:          "printenv HOME",
+			wantDecision: "yellow",
+			wantLLM:      true,
+		},
+		{
+			name:         "bare env is YELLOW with LLM review",
+			cmds:         []CommandInfo{{Name: "env"}},
+			raw:          "env",
+			wantDecision: "yellow",
+			wantLLM:      true,
+		},
+		{
+			name:         "env VAR=val cmd is YELLOW with LLM review",
+			cmds:         []CommandInfo{{Name: "env", Args: []string{"FOO=bar", "cmd"}}},
+			raw:          "env FOO=bar cmd",
+			wantDecision: "yellow",
+			wantLLM:      true,
+		},
+		{
+			name:         "date remains GREEN",
+			cmds:         []CommandInfo{{Name: "date"}},
+			raw:          "date",
+			wantDecision: "green",
+			wantLLM:      false,
+		},
+		{
+			name:         "uname remains GREEN",
+			cmds:         []CommandInfo{{Name: "uname", Flags: []string{"-a"}}},
+			raw:          "uname -a",
+			wantDecision: "green",
+			wantLLM:      false,
+		},
+		{
+			name:         "whoami remains GREEN",
+			cmds:         []CommandInfo{{Name: "whoami"}},
+			raw:          "whoami",
+			wantDecision: "green",
+			wantLLM:      false,
+		},
+		{
+			name: "printenv | grep TOKEN is NOT green (printenv is not green)",
+			cmds: []CommandInfo{
+				{Name: "printenv", Context: CommandContext{PipelinePosition: 1}},
+				{Name: "grep", Args: []string{"TOKEN"}, Context: CommandContext{PipelinePosition: 2}},
+			},
+			raw:          "printenv | grep TOKEN",
+			wantDecision: "yellow",
+			wantLLM:      true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := engine.Evaluate(context.Background(), tt.cmds, tt.raw, "")
+			if result.Decision != tt.wantDecision {
+				t.Errorf("expected decision=%q, got %q (reason: %s)", tt.wantDecision, result.Decision, result.Reason)
+			}
+			if result.LLMReview != tt.wantLLM {
+				t.Errorf("expected LLMReview=%v, got %v", tt.wantLLM, result.LLMReview)
+			}
+		})
+	}
+}

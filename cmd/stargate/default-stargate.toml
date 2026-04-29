@@ -294,7 +294,7 @@ subcommands = ["ps", "images", "logs", "inspect", "stats", "top", "port"]
 reason = "Read-only Docker operations."
 
 [[rules.green]]
-commands = ["date", "cal", "printenv", "uname", "hostname", "id", "whoami"]
+commands = ["date", "cal", "uname", "hostname", "id", "whoami"]
 reason = "System info queries (read-only)."
 
 [[rules.green]]
@@ -460,6 +460,11 @@ reason = "Trap handlers execute strings as commands."
 command = "env"
 llm_review = true
 reason = "env can execute commands and modify environment (PATH, LD_PRELOAD)."
+
+[[rules.yellow]]
+command = "printenv"
+llm_review = true
+reason = "printenv dumps all environment variables including secrets (tokens, API keys, credentials) when invoked without arguments."
 
 [[rules.yellow]]
 commands = ["export", "unset"]
