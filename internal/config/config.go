@@ -372,6 +372,18 @@ func applyDefaults(cfg *Config) {
 	if cfg.LLM.MaxTotalFileBytes == 0 {
 		cfg.LLM.MaxTotalFileBytes = 131072 // 128KB
 	}
+	if cfg.LLM.Model == "" {
+		cfg.LLM.Model = "claude-sonnet-4-6"
+	}
+	if cfg.LLM.MaxTokens == 0 {
+		cfg.LLM.MaxTokens = 512
+	}
+	if cfg.LLM.MaxResponseReasoningLength == 0 {
+		cfg.LLM.MaxResponseReasoningLength = 200
+	}
+	if cfg.LLM.MaxFileSize == 0 {
+		cfg.LLM.MaxFileSize = 65536 // 64KB
+	}
 	if cfg.LLM.MaxCallsPerMinute == nil {
 		defaultRate := 30
 		cfg.LLM.MaxCallsPerMinute = &defaultRate

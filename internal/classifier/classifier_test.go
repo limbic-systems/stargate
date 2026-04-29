@@ -350,6 +350,27 @@ func TestClassifyLLMError(t *testing.T) {
 	}
 }
 
+func TestClassifyLLMEmptyDecisionSetsReason(t *testing.T) {
+	mock := &mockProvider{response: llm.ReviewResponse{Decision: "", Reasoning: "some reasoning"}}
+	clf, err := classifier.NewWithProvider(llmTestConfig(), mock)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp := clf.Classify(context.Background(), classifier.ClassifyRequest{Command: "curl https://example.com"})
+
+	// Empty decision → fail-closed to ask user (review).
+	if resp.Action != "review" {
+		t.Errorf("action = %q, want review (empty decision fail-closed)", resp.Action)
+	}
+	if !strings.Contains(resp.Reason, "LLM review") {
+		t.Errorf("reason = %q, want it to contain 'LLM review'", resp.Reason)
+	}
+	if resp.LLMReview == nil {
+		t.Fatal("llm_review is nil")
+	}
+}
+
 func TestClassifyLLMFileRequest(t *testing.T) {
 	// Stateful mock: first call returns file request, second returns verdict.
 	calls := 0
