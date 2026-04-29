@@ -142,6 +142,7 @@ type ParserConfig struct {
 // ClassifierConfig holds classifier behaviour settings.
 type ClassifierConfig struct {
 	DefaultDecision       string `toml:"default_decision"`
+	DefaultLLMReview      *bool  `toml:"default_llm_review"`
 	UnresolvableExpansion string `toml:"unresolvable_expansion"`
 	MaxASTDepth           int    `toml:"max_ast_depth"`
 	MaxCommandLength      int    `toml:"max_command_length"`
@@ -351,6 +352,10 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Classifier.DefaultDecision == "" {
 		cfg.Classifier.DefaultDecision = "yellow"
+	}
+	if cfg.Classifier.DefaultLLMReview == nil {
+		t := true
+		cfg.Classifier.DefaultLLMReview = &t
 	}
 	if cfg.Classifier.UnresolvableExpansion == "" {
 		cfg.Classifier.UnresolvableExpansion = "yellow"

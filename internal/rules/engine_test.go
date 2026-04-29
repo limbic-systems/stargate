@@ -430,11 +430,12 @@ func TestEvaluate_YellowMatching(t *testing.T) {
 			wantReason:    "signal send",
 		},
 		{
-			name:       "unknown_command falls to default YELLOW",
-			cmds:       []CommandInfo{{Name: "unknown_command"}},
-			raw:        "unknown_command",
-			wantYellow: true,
-			wantReason: "", // default, no reason from rule
+			name:          "unknown_command falls to default YELLOW with LLM review",
+			cmds:          []CommandInfo{{Name: "unknown_command"}},
+			raw:           "unknown_command",
+			wantYellow:    true,
+			wantLLMReview: true,
+			wantReason:    "", // default, no reason from rule
 		},
 	}
 
@@ -451,11 +452,31 @@ func TestEvaluate_YellowMatching(t *testing.T) {
 				if tt.wantReason != "" && result.Reason != tt.wantReason {
 					t.Errorf("expected reason=%q, got %q", tt.wantReason, result.Reason)
 				}
-				if result.Rule != nil && result.LLMReview != tt.wantLLMReview {
+				if result.LLMReview != tt.wantLLMReview {
 					t.Errorf("expected llm_review=%v, got %v", tt.wantLLMReview, result.LLMReview)
 				}
 			}
 		})
+	}
+}
+
+func TestDefaultLLMReviewDisabled(t *testing.T) {
+	cfg := testConfig(nil, nil, nil, "yellow")
+	cfg.Classifier.DefaultLLMReview = boolPtr(false)
+	engine, err := NewEngine(cfg)
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+	result := engine.Evaluate(context.Background(),
+		[]CommandInfo{{Name: "unknown_command"}},
+		"unknown_command",
+		"",
+	)
+	if result.Decision != "yellow" {
+		t.Errorf("expected yellow, got %s", result.Decision)
+	}
+	if result.LLMReview {
+		t.Error("expected LLMReview=false when default_llm_review is disabled")
 	}
 }
 
