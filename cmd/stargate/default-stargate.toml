@@ -14,6 +14,7 @@ dialect = "bash"
 
 [classifier]
 default_decision = "yellow"
+# default_llm_review = true
 unresolvable_expansion = "yellow"
 # max_ast_depth = 64
 # max_command_length = 65536

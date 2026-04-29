@@ -16,12 +16,13 @@ import (
 
 // Engine evaluates commands against compiled classification rules.
 type Engine struct {
-	red              []compiledRule
-	green            []compiledRule
-	yellow           []compiledRule
-	defaultDecision  string
-	scopeMatcher     ScopeMatcher
-	resolverProvider ResolverProvider
+	red                []compiledRule
+	green              []compiledRule
+	yellow             []compiledRule
+	defaultDecision    string
+	defaultLLMReview   bool
+	scopeMatcher       ScopeMatcher
+	resolverProvider   ResolverProvider
 }
 
 // compiledRule holds a config rule with pre-compiled fields.
@@ -77,8 +78,14 @@ func NewEngine(cfg *config.Config) (*Engine, error) {
 	}
 	resolverProv := scopes.NewResolverAdapter(scopes.DefaultResolverRegistry())
 
+	defLLMReview := true
+	if cfg.Classifier.DefaultLLMReview != nil {
+		defLLMReview = *cfg.Classifier.DefaultLLMReview
+	}
+
 	e := &Engine{
 		defaultDecision:  defDecision,
+		defaultLLMReview: defLLMReview,
 		scopeMatcher:     scopeReg,
 		resolverProvider: resolverProv,
 	}
@@ -281,9 +288,10 @@ func (e *Engine) evaluate(ctx context.Context, cmds []CommandInfo, rawCommand st
 
 	// Phase 4: Default decision.
 	return &Result{
-		Decision: e.defaultDecision,
-		Action:   decisionToAction(e.defaultDecision),
-		Reason:   "no rule matched; applied default classification",
+		Decision:  e.defaultDecision,
+		Action:    decisionToAction(e.defaultDecision),
+		Reason:    "no rule matched; applied default classification",
+		LLMReview: e.defaultLLMReview && e.defaultDecision == "yellow",
 	}
 }
 
