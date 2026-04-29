@@ -162,6 +162,11 @@ func TestValidation(t *testing.T) {
 			wantErr: "llm.max_file_size",
 		},
 		{
+			name:    "negative llm.max_response_reasoning_length",
+			toml:    "[llm]\nmax_response_reasoning_length = -1",
+			wantErr: "llm.max_response_reasoning_length",
+		},
+		{
 			name:    "llm.temperature too high",
 			toml:    "[llm]\ntemperature = 3.0",
 			wantErr: "llm.temperature",
