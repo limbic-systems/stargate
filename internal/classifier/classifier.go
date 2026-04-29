@@ -508,7 +508,7 @@ func (c *Classifier) Classify(ctx context.Context, req ClassifyRequest) *Classif
 			default:
 				// Invalid/empty decision → ask user (fail-closed).
 				resp.Action = "review"
-				resp.Reason = "LLM review returned invalid/empty decision; defaulting to ask-user (fail-closed)"
+				resp.Reason = "LLM review returned invalid/empty decision; defaulting to review (fail-closed)"
 			}
 		}
 	}
