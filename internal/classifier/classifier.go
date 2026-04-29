@@ -484,8 +484,10 @@ func (c *Classifier) Classify(ctx context.Context, req ClassifyRequest) *Classif
 	resp.Rule = result.Rule
 
 	// 6. LLM review — only for YELLOW decisions with llm_review=true.
+	// The decision check guards against unresolvable_expansion overriding a
+	// yellow default to red/green while LLMReview remains set.
 	// Signature computed lazily inside reviewWithLLM (after cache miss).
-	if result.LLMReview && c.llmProvider != nil {
+	if result.Decision == "yellow" && result.LLMReview && c.llmProvider != nil {
 		llmResult := c.reviewWithLLM(state)
 		resp.LLMReview = llmResult
 		resp.Timing.LLMMs = llmResult.DurationMs
