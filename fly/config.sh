@@ -9,6 +9,6 @@ COMMON_FLAGS=(
   --region sjc
   --restart no
   --autostart=false
-  --vm-memory 4096
-  --vm-size shared-cpu-2x
+  --vm-memory 8192
+  --vm-size performance-1x
 )
