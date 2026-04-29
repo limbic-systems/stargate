@@ -1226,8 +1226,8 @@ func TestPrintenvEnvClassification(t *testing.T) {
 		{Command: "grep", Reason: "safe grep"},
 	}
 	yellowRules := []config.Rule{
-		{Command: "env", LLMReview: boolPtr(true), Reason: "env can execute commands and modify environment (PATH, LD_PRELOAD)."},
-		{Command: "printenv", LLMReview: boolPtr(true), Reason: "printenv dumps all environment variables including secrets."},
+		{Command: "env", LLMReview: boolPtr(true), Reason: "Bare env prints environment variables and may expose secrets."},
+		{Command: "printenv", LLMReview: boolPtr(true), Reason: "printenv reveals environment variable values and can expose secrets."},
 	}
 	cfg := testConfig(nil, greenRules, yellowRules, "yellow")
 	engine, err := NewEngine(cfg)
@@ -1264,9 +1264,9 @@ func TestPrintenvEnvClassification(t *testing.T) {
 			wantLLM:      true,
 		},
 		{
-			name:         "env VAR=val cmd is YELLOW with LLM review",
-			cmds:         []CommandInfo{{Name: "env", Args: []string{"FOO=bar", "cmd"}}},
-			raw:          "env FOO=bar cmd",
+			name:         "env with only assignments (no inner cmd) is YELLOW",
+			cmds:         []CommandInfo{{Name: "env", Args: []string{"FOO=bar"}}},
+			raw:          "env FOO=bar",
 			wantDecision: "yellow",
 			wantLLM:      true,
 		},

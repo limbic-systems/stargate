@@ -459,12 +459,12 @@ reason = "Trap handlers execute strings as commands."
 [[rules.yellow]]
 command = "env"
 llm_review = true
-reason = "env can execute commands and modify environment (PATH, LD_PRELOAD)."
+reason = "Bare env prints environment variables and may expose secrets (tokens, API keys, credentials)."
 
 [[rules.yellow]]
 command = "printenv"
 llm_review = true
-reason = "printenv dumps all environment variables including secrets (tokens, API keys, credentials) when invoked without arguments."
+reason = "printenv reveals environment variable values and can expose secrets; the no-argument form is especially risky as it dumps the full environment."
 
 [[rules.yellow]]
 commands = ["export", "unset"]
