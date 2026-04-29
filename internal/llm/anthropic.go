@@ -99,13 +99,24 @@ func (p *AnthropicProvider) reviewSDK(ctx context.Context, req ReviewRequest) (R
 
 // reviewSubprocess calls `claude -p` with the prompt piped via stdin.
 // Uses SIGTERM→SIGKILL with WaitDelay for graceful shutdown.
+//
+// The system prompt is passed via --system-prompt (trusted instructions)
+// while user content flows through stdin (untrusted data). This separation
+// prevents Claude Code's own system prompt from treating our classifier
+// instructions as prompt injection.
 func (p *AnthropicProvider) reviewSubprocess(ctx context.Context, req ReviewRequest) (ReviewResponse, error) {
-	cmd := exec.CommandContext(ctx, "claude", "-p", "--model", req.Model, "--max-turns", "1", "-")
+	args := []string{
+		"-p",
+		"--model", req.Model,
+		"--max-turns", "1",
+		"--system-prompt", req.SystemPrompt,
+	}
+	cmd := exec.CommandContext(ctx, "claude", args...)
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
 	cmd.WaitDelay = 3 * time.Second
 
-	// Pipe prompt via stdin — SystemPrompt + UserContent concatenated.
-	cmd.Stdin = strings.NewReader(req.SystemPrompt + "\n\n" + req.UserContent)
+	// Pipe only untrusted user content via stdin — system prompt goes via flag.
+	cmd.Stdin = strings.NewReader(req.UserContent)
 
 	// Bounded stderr drain to prevent pipe deadlock.
 	stderrPipe, err := cmd.StderrPipe()
