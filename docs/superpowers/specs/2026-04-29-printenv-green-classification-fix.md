@@ -103,7 +103,7 @@ Add a test in `internal/rules/` that verifies:
 - `printenv` (bare) classifies as YELLOW with `llm_review = true`
 - `printenv HOME` (with args) classifies as YELLOW with `llm_review = true`
 - `env` (bare) classifies as YELLOW with `llm_review = true`
-- `env VAR=val cmd` classifies as YELLOW with `llm_review = true`
+- `env FOO=bar` (assignments only, no inner command) classifies as YELLOW with `llm_review = true` — note: `env` is a wrapper, so `env FOO=bar cmd` resolves to `cmd` and classification follows the inner command's rules
 - Remaining system-info commands (`date`, `cal`, `uname`, `hostname`, `id`, `whoami`) remain GREEN (regression guard)
 - Compound command `printenv | grep TOKEN` is not classified as GREEN (pipeline where `printenv` is not GREEN prevents all-green result)
 
