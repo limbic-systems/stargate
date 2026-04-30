@@ -194,6 +194,31 @@ func isConnectionRefused(err error) bool {
 	return strings.Contains(err.Error(), "connection refused")
 }
 
+// IsServerUnavailable returns true when the error indicates the stargate
+// server could not be reached — timeout, connection refused, or DNS failure.
+// Callers use this to fall back to prompting the user instead of failing hard.
+func IsServerUnavailable(err error) bool {
+	if err == nil {
+		return false
+	}
+	if isConnectionRefused(err) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) && urlErr.Timeout() {
+		return true
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var dnsErr *net.DNSError
+	return errors.As(err, &dnsErr)
+}
+
 // readErrorResponse reads the response body (truncated to 200 chars) and
 // returns a descriptive error containing the HTTP status code and body.
 func readErrorResponse(resp *http.Response) error {

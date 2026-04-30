@@ -3,8 +3,12 @@ package adapter_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"syscall"
 	"testing"
 	"time"
 
@@ -262,4 +266,33 @@ func TestValidateURL_AllowRemote(t *testing.T) {
 		t.Errorf("unexpected error with AllowRemote=true: %v", err)
 	}
 }
+
+func TestIsServerUnavailable(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil error", nil, false},
+		{"random error", errors.New("something broke"), false},
+		{"connection refused", syscall.ECONNREFUSED, true},
+		{"wrapped connection refused", &url.Error{Op: "Post", Err: &net.OpError{Err: syscall.ECONNREFUSED}}, true},
+		{"context deadline exceeded", context.DeadlineExceeded, true},
+		{"url timeout", &url.Error{Op: "Post", Err: &timeoutErr{}}, true},
+		{"dns error", &net.DNSError{Err: "no such host"}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := adapter.IsServerUnavailable(tt.err); got != tt.want {
+				t.Errorf("IsServerUnavailable(%v) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
+	}
+}
+
+type timeoutErr struct{}
+
+func (e *timeoutErr) Error() string   { return "timeout" }
+func (e *timeoutErr) Timeout() bool   { return true }
+func (e *timeoutErr) Temporary() bool { return true }
 

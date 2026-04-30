@@ -187,6 +187,10 @@ func HandlePreToolUse(ctx context.Context, stdin io.Reader, stdout io.Writer, st
 
 	resp, err := Classify(ctx, cfg, classifyReq)
 	if err != nil {
+		if IsServerUnavailable(err) {
+			fmt.Fprintf(stderr, "adapter: classify: server unavailable, falling back to ask: %v\n", err)
+			return writeAskFallbackResponse(stdout, stderr)
+		}
 		fmt.Fprintf(stderr, "adapter: classify: %v\n", err)
 		return 2
 	}
@@ -266,6 +270,24 @@ func mapActionToDecision(action string) string {
 	default:
 		return "deny"
 	}
+}
+
+// writeAskFallbackResponse writes a permissionDecision=ask to stdout when the
+// stargate server is unavailable. This falls back to Claude Code's native
+// user-approval prompt instead of failing hard with exit code 2.
+func writeAskFallbackResponse(stdout io.Writer, stderr io.Writer) int {
+	out := hookOutput{
+		HookSpecificOutput: &hookSpecificOutput{
+			HookEventName:            "PreToolUse",
+			PermissionDecision:       "ask",
+			PermissionDecisionReason: "[stargate] classification server unavailable, falling back to user approval",
+		},
+	}
+	if err := json.NewEncoder(stdout).Encode(out); err != nil {
+		fmt.Fprintf(stderr, "adapter: writing hook response: %v\n", err)
+		return 2
+	}
+	return 0
 }
 
 // writeAllowResponse writes a permissionDecision=allow to stdout and returns exit 0.
