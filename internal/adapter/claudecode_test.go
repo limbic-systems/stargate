@@ -272,15 +272,61 @@ func TestHandlePreToolUse_InvalidToolUseID(t *testing.T) {
 	}
 }
 
-func TestHandlePreToolUse_ServerUnreachable(t *testing.T) {
+func TestHandlePreToolUse_ServerUnreachable_FallsBackToAsk(t *testing.T) {
 	stdin := strings.NewReader(makePreToolUseInput("Bash", "ls", "toolu_007"))
-	var stdout bytes.Buffer
+	var stdout, stderr bytes.Buffer
 	// Point at a port that's definitely not listening.
 	cfg := adapter.ClientConfig{URL: "http://127.0.0.1:1", Timeout: 500 * time.Millisecond}
 
-	code := adapter.HandlePreToolUse(context.Background(), stdin, &stdout, io.Discard, cfg)
-	if code != 2 {
-		t.Errorf("exit code: got %d, want 2 for unreachable server", code)
+	code := adapter.HandlePreToolUse(context.Background(), stdin, &stdout, &stderr, cfg)
+	if code != 0 {
+		t.Errorf("exit code: got %d, want 0 (fallback to ask)", code)
+	}
+
+	var out map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("failed to parse stdout JSON: %v", err)
+	}
+	hookOut, ok := out["hookSpecificOutput"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing hookSpecificOutput in response: %s", stdout.String())
+	}
+	if decision := hookOut["permissionDecision"]; decision != "ask" {
+		t.Errorf("permissionDecision: got %q, want %q", decision, "ask")
+	}
+
+	if !strings.Contains(stderr.String(), "server unavailable") {
+		t.Errorf("expected stderr to contain 'server unavailable', got: %s", stderr.String())
+	}
+}
+
+func TestHandlePreToolUse_TimeoutFallsBackToAsk(t *testing.T) {
+	done := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-done
+	}))
+	defer srv.Close()
+	defer close(done)
+
+	stdin := strings.NewReader(makePreToolUseInput("Bash", "ls", "toolu_timeout"))
+	var stdout, stderr bytes.Buffer
+	cfg := adapter.ClientConfig{URL: srv.URL, Timeout: 50 * time.Millisecond}
+
+	code := adapter.HandlePreToolUse(context.Background(), stdin, &stdout, &stderr, cfg)
+	if code != 0 {
+		t.Errorf("exit code: got %d, want 0 (fallback to ask)", code)
+	}
+
+	var out map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("failed to parse stdout JSON: %v", err)
+	}
+	hookOut, ok := out["hookSpecificOutput"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing hookSpecificOutput in response: %s", stdout.String())
+	}
+	if decision := hookOut["permissionDecision"]; decision != "ask" {
+		t.Errorf("permissionDecision: got %q, want %q", decision, "ask")
 	}
 }
 
