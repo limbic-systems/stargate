@@ -326,6 +326,9 @@ default_decision = "yellow"
 	if cfg.LLM.AllowFileRetrieval != false {
 		t.Errorf("LLM.AllowFileRetrieval = %v, want false (secure by default)", cfg.LLM.AllowFileRetrieval)
 	}
+	if cfg.Server.Timeout != "30s" {
+		t.Errorf("Server.Timeout = %q, want %q", cfg.Server.Timeout, "30s")
+	}
 }
 
 func TestExplicitZeroReasoningLengthPreserved(t *testing.T) {
