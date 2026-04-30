@@ -187,8 +187,8 @@ subcommands = ["ps", "images", "logs", "inspect", "stats", "top", "port"]
 reason = "Read-only Docker operations."
 
 [[rules.green]]
-commands = ["date", "cal", "env", "printenv", "uname", "hostname", "id", "whoami"]
-reason = "System info queries."
+commands = ["date", "cal", "uname", "hostname", "id", "whoami"]
+reason = "System info queries (read-only)."
 
 [[rules.green]]
 commands = ["mkdir", "touch"]
@@ -320,6 +320,16 @@ reason = "Shell invocation may execute scripts — LLM reviews arguments and con
 command = "exec"
 llm_review = true
 reason = "exec replaces the current process — LLM reviews the target command."
+
+[[rules.yellow]]
+command = "env"
+llm_review = true
+reason = "Bare env prints environment variables and may expose secrets (tokens, API keys, credentials)."
+
+[[rules.yellow]]
+command = "printenv"
+llm_review = true
+reason = "printenv reveals environment variable values and can expose secrets; the no-argument form is especially risky as it dumps the full environment."
 
 # ---------------------------------------------------------------------------
 # LLM Reviewer Configuration
