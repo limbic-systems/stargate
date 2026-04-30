@@ -298,7 +298,7 @@ func TestValidation(t *testing.T) {
 	}
 }
 
-func TestApplyDefaultsLLMFields(t *testing.T) {
+func TestApplyDefaults(t *testing.T) {
 	path := writeConfig(t, `
 [server]
 listen = "127.0.0.1:9099"
