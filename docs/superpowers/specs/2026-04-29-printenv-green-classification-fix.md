@@ -5,7 +5,7 @@
 
 ## Problem
 
-`printenv` is classified as GREEN (always allow) in both `cmd/stargate/default-stargate.toml` and `stargate.toml`, grouped with read-only system info commands (`date`, `cal`, `uname`, `hostname`, `id`, `whoami`).
+`printenv` was classified as GREEN (always allow) in both `cmd/stargate/default-stargate.toml` and `stargate.toml`, grouped with read-only system info commands (`date`, `cal`, `uname`, `hostname`, `id`, `whoami`).
 
 Unlike those commands, `printenv` (and `env` without arguments) dumps **all environment variables**, including high-value secrets:
 
@@ -15,9 +15,9 @@ Unlike those commands, `printenv` (and `env` without arguments) dumps **all envi
 - `ANTHROPIC_API_KEY`
 - `STARGATE_OTEL_USERNAME` / `STARGATE_OTEL_PASSWORD` (Grafana credentials)
 
-Since GREEN means auto-allow with no review, the agent can run `printenv` at any time and all secrets enter the conversation context. The scrubbing layer's `extra_patterns` catch some formats (`ghp_*`, `sk-ant-*`) but not all — OAuth tokens and Fly access tokens lack recognizable prefixes.
+Since GREEN means auto-allow with no review, the agent could run `printenv` at any time and all secrets would enter the conversation context. The scrubbing layer's `extra_patterns` catch some formats (`ghp_*`, `sk-ant-*`) but not all — OAuth tokens and Fly access tokens lack recognizable prefixes.
 
-**Additional finding:** `env` is GREEN in `stargate.toml` (line 190) despite being correctly classified as YELLOW with `llm_review = true` in `default-stargate.toml` (line 460). This is the same vulnerability.
+**Additional finding:** `env` was GREEN in `stargate.toml` despite already being correctly classified as YELLOW with `llm_review = true` in `default-stargate.toml`. This was the same vulnerability.
 
 ## Affected Security Layers
 
