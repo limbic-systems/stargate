@@ -23,19 +23,21 @@ var validGitHubName = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
 //
 // Resolution order (first match wins):
 //  1. Explicit --repo=owner/repo or -R=owner/repo flag in CommandInfo.Flags
-//  2. GitHub API path in Args (repos/owner/repo/...)
-//  3. Inference from .git/config remote "origin" URL
-//
-// The space-separated form (--repo owner/repo) is consumed by the walker's
-// global flag skipping and is not available in CommandInfo. Users of that form
-// fall through to .git/config inference.
+//  2. Space-separated --repo owner/repo or -R owner/repo in CommandInfo.RawArgs
+//  3. GitHub API path in Args (repos/owner/repo/...)
+//  4. Inference from .git/config remote "origin" URL
 func ResolveGitHubRepoOwner(ctx context.Context, cmd types.CommandInfo, cwd string) (string, bool, error) {
 	// Step 1: Check flags for --repo=owner/repo or -R=owner/repo.
 	if owner, ok := ownerFromRepoFlag(cmd.Flags); ok {
 		return strings.ToLower(owner), true, nil
 	}
 
-	// Step 2: Check args for gh api repos/owner/repo/... path.
+	// Step 2: Check RawArgs for --repo owner/repo or -R owner/repo (space form).
+	if owner, ok := ownerFromRawArgs(cmd.RawArgs); ok {
+		return strings.ToLower(owner), true, nil
+	}
+
+	// Step 3: Check args for gh api repos/owner/repo/... path.
 	owner, ok, sawReposPath := ownerFromAPIPath(cmd.Args)
 	if ok {
 		return strings.ToLower(owner), true, nil
@@ -47,7 +49,7 @@ func ResolveGitHubRepoOwner(ctx context.Context, cmd types.CommandInfo, cwd stri
 		return "", false, nil
 	}
 
-	// Step 3: Infer from .git/config (only when no explicit repo target found).
+	// Step 4: Infer from .git/config (only when no explicit repo target found).
 	owner, ok, err := ownerFromGitConfig(ctx, cwd)
 	if err != nil {
 		return "", false, fmt.Errorf("github_repo_owner: git config: %w", err)
@@ -77,6 +79,40 @@ func ownerFromRepoFlag(flags []string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// ownerFromRawArgs scans the pre-classification argument list for
+// --repo or -R followed by an owner/repo value (space-separated form).
+// If multiple flags are found with different owners, returns ("", false)
+// to fail-closed. Stops scanning at "--" (end-of-options).
+func ownerFromRawArgs(rawArgs []string) (string, bool) {
+	var found string
+	for i := 0; i < len(rawArgs); i++ {
+		arg := rawArgs[i]
+		if arg == "--" {
+			break
+		}
+		isRepo := arg == "--repo" || arg == "-R"
+		if !isRepo {
+			continue
+		}
+		if i+1 >= len(rawArgs) {
+			continue
+		}
+		i++
+		owner, ok := parseOwnerRepo(rawArgs[i])
+		if !ok {
+			continue
+		}
+		if found != "" && !strings.EqualFold(found, owner) {
+			return "", false
+		}
+		found = owner
+	}
+	if found == "" {
+		return "", false
+	}
+	return found, true
 }
 
 // ownerFromAPIPath scans positional args for a GitHub API path like

@@ -19,13 +19,22 @@ func ghCmd(flags []string, args []string) types.CommandInfo {
 	}
 }
 
+func ghCmdWithRaw(flags, args, rawArgs []string) types.CommandInfo {
+	return types.CommandInfo{
+		Name:    "gh",
+		Flags:   flags,
+		Args:    args,
+		RawArgs: rawArgs,
+	}
+}
+
 // --- Step 1: --repo= / -R= flag extraction ---
 
 func TestRepoFlagEquals(t *testing.T) {
 	tests := []struct {
-		name  string
-		cmd   types.CommandInfo
-		want  string
+		name   string
+		cmd    types.CommandInfo
+		want   string
 		wantOK bool
 	}{
 		{
@@ -572,5 +581,93 @@ func TestGitSubmoduleResolvesOwnConfig(t *testing.T) {
 	}
 	if got != "sub-org" {
 		t.Errorf("owner = %q, want %q (submodule owner, not parent)", got, "sub-org")
+	}
+}
+
+// --- Step 4: space-separated --repo/-R flag in RawArgs ---
+
+func TestRepoFlagSpaceForm(t *testing.T) {
+	tests := []struct {
+		name   string
+		cmd    types.CommandInfo
+		want   string
+		wantOK bool
+	}{
+		{
+			name:   "space-separated --repo",
+			cmd:    ghCmdWithRaw([]string{"--repo"}, []string{"pr", "list"}, []string{"--repo", "derek/stargate", "pr", "list"}),
+			want:   "derek",
+			wantOK: true,
+		},
+		{
+			name:   "space-separated -R",
+			cmd:    ghCmdWithRaw([]string{"-R"}, []string{"issue", "create"}, []string{"-R", "derek/stargate", "issue", "create"}),
+			want:   "derek",
+			wantOK: true,
+		},
+		{
+			name:   "--repo at end of args (no value follows)",
+			cmd:    ghCmdWithRaw([]string{"--repo"}, []string{"pr", "list"}, []string{"pr", "list", "--repo"}),
+			want:   "",
+			wantOK: false,
+		},
+		{
+			name:   "--repo after -- (end-of-options)",
+			cmd:    ghCmdWithRaw(nil, []string{"pr", "list"}, []string{"--", "--repo", "derek/stargate", "pr", "list"}),
+			want:   "",
+			wantOK: false,
+		},
+		{
+			name:   "duplicate --repo same owner",
+			cmd:    ghCmdWithRaw([]string{"--repo"}, []string{"pr", "list"}, []string{"--repo", "derek/stargate", "--repo", "derek/other", "pr", "list"}),
+			want:   "derek",
+			wantOK: true,
+		},
+		{
+			name:   "duplicate --repo different owners (fail-closed)",
+			cmd:    ghCmdWithRaw([]string{"--repo"}, []string{"pr", "list"}, []string{"--repo", "derek/stargate", "--repo", "evil/repo", "pr", "list"}),
+			want:   "",
+			wantOK: false,
+		},
+		{
+			name:   "--repo with variable expansion value",
+			cmd:    ghCmdWithRaw([]string{"--repo"}, []string{"pr", "list"}, []string{"--repo", "$REPO", "pr", "list"}),
+			want:   "",
+			wantOK: false,
+		},
+		{
+			name:   "--repo with empty value",
+			cmd:    ghCmdWithRaw([]string{"--repo"}, []string{"pr", "list"}, []string{"--repo", "", "pr", "list"}),
+			want:   "",
+			wantOK: false,
+		},
+		{
+			name:   "no --repo in rawArgs",
+			cmd:    ghCmdWithRaw(nil, []string{"pr", "list"}, []string{"pr", "list"}),
+			want:   "",
+			wantOK: false,
+		},
+		{
+			name:   "nil rawArgs",
+			cmd:    ghCmd([]string{"--repo"}, []string{"pr", "list"}),
+			want:   "",
+			wantOK: false,
+		},
+	}
+
+	ctx := context.Background()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok, err := scopes.ResolveGitHubRepoOwner(ctx, tt.cmd, t.TempDir())
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if ok != tt.wantOK {
+				t.Errorf("ok = %v, want %v", ok, tt.wantOK)
+			}
+			if got != tt.want {
+				t.Errorf("owner = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
