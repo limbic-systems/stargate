@@ -33,8 +33,15 @@ func ResolveGitHubRepoOwner(ctx context.Context, cmd types.CommandInfo, cwd stri
 	}
 
 	// Step 2: Check RawArgs for --repo owner/repo or -R owner/repo (space form).
-	if owner, ok := ownerFromRawArgs(cmd.RawArgs); ok {
+	owner, ok, sawRepoFlag := ownerFromRawArgs(cmd.RawArgs)
+	if ok {
 		return strings.ToLower(owner), true, nil
+	}
+	// If a --repo/-R flag was found but the value was unparseable (variable
+	// expansion, empty, conflicting owners), do NOT fall back — the command
+	// targets a specific repo we can't verify.
+	if sawRepoFlag {
+		return "", false, nil
 	}
 
 	// Step 3: Check args for gh api repos/owner/repo/... path.
@@ -83,9 +90,10 @@ func ownerFromRepoFlag(flags []string) (string, bool) {
 
 // ownerFromRawArgs scans the pre-classification argument list for
 // --repo or -R followed by an owner/repo value (space-separated form).
-// If multiple flags are found with different owners, returns ("", false)
-// to fail-closed. Stops scanning at "--" (end-of-options).
-func ownerFromRawArgs(rawArgs []string) (string, bool) {
+// Returns (owner, true, true) on success, ("", false, true) if a repo flag
+// was found but the value was unparseable or conflicting, or ("", false, false)
+// if no repo flag was found. Stops scanning at "--" (end-of-options).
+func ownerFromRawArgs(rawArgs []string) (owner string, ok bool, sawFlag bool) {
 	var found string
 	for i := 0; i < len(rawArgs); i++ {
 		arg := rawArgs[i]
@@ -96,23 +104,24 @@ func ownerFromRawArgs(rawArgs []string) (string, bool) {
 		if !isRepo {
 			continue
 		}
+		sawFlag = true
 		if i+1 >= len(rawArgs) {
-			continue
+			return "", false, true
 		}
 		i++
 		owner, ok := parseOwnerRepo(rawArgs[i])
 		if !ok {
-			continue
+			return "", false, true
 		}
 		if found != "" && !strings.EqualFold(found, owner) {
-			return "", false
+			return "", false, true
 		}
 		found = owner
 	}
 	if found == "" {
-		return "", false
+		return "", false, sawFlag
 	}
-	return found, true
+	return found, true, true
 }
 
 // ownerFromAPIPath scans positional args for a GitHub API path like

@@ -417,6 +417,46 @@ func TestPriorityAPIPathOverGitConfig(t *testing.T) {
 	}
 }
 
+// --- Unparseable --repo blocks .git/config fallthrough ---
+
+func TestRepoFlagUnparseableBlocksFallthrough(t *testing.T) {
+	dir := t.TempDir()
+	writeGitConfig(t, dir, `[remote "origin"]
+	url = https://github.com/trusted-org/repo.git
+`)
+
+	tests := []struct {
+		name string
+		cmd  types.CommandInfo
+	}{
+		{
+			name: "variable expansion --repo $REPO",
+			cmd:  ghCmdWithRaw([]string{"--repo"}, []string{"pr", "list"}, []string{"--repo", "$REPO", "pr", "list"}),
+		},
+		{
+			name: "empty --repo value",
+			cmd:  ghCmdWithRaw([]string{"--repo"}, []string{"pr", "list"}, []string{"--repo", "", "pr", "list"}),
+		},
+		{
+			name: "--repo with invalid format",
+			cmd:  ghCmdWithRaw([]string{"--repo"}, []string{"pr", "list"}, []string{"--repo", "noslash", "pr", "list"}),
+		},
+	}
+
+	ctx := context.Background()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok, err := scopes.ResolveGitHubRepoOwner(ctx, tt.cmd, dir)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if ok {
+				t.Errorf("expected unresolvable, but got owner=%q — .git/config fallthrough should be blocked", got)
+			}
+		})
+	}
+}
+
 // --- Resolver registry ---
 
 func TestDefaultResolverRegistry(t *testing.T) {
@@ -630,13 +670,13 @@ func TestRepoFlagSpaceForm(t *testing.T) {
 			wantOK: false,
 		},
 		{
-			name:   "--repo with variable expansion value",
+			name:   "--repo with variable expansion value (blocks fallthrough)",
 			cmd:    ghCmdWithRaw([]string{"--repo"}, []string{"pr", "list"}, []string{"--repo", "$REPO", "pr", "list"}),
 			want:   "",
 			wantOK: false,
 		},
 		{
-			name:   "--repo with empty value",
+			name:   "--repo with empty value (blocks fallthrough)",
 			cmd:    ghCmdWithRaw([]string{"--repo"}, []string{"pr", "list"}, []string{"--repo", "", "pr", "list"}),
 			want:   "",
 			wantOK: false,
