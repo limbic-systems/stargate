@@ -32,14 +32,12 @@ func ResolveGitHubRepoOwner(ctx context.Context, cmd types.CommandInfo, cwd stri
 		return strings.ToLower(owner), true, nil
 	}
 
-	// Step 2: Check RawArgs for --repo owner/repo or -R owner/repo (space form).
+	// Step 2: Check RawArgs for --repo owner/repo or -R owner/repo (space form),
+	// and also detect equals-form with unparseable values (--repo=$VAR).
 	owner, ok, sawRepoFlag := ownerFromRawArgs(cmd.RawArgs)
 	if ok {
 		return strings.ToLower(owner), true, nil
 	}
-	// If a --repo/-R flag was found but the value was unparseable (variable
-	// expansion, empty, conflicting owners), do NOT fall back — the command
-	// targets a specific repo we can't verify.
 	if sawRepoFlag {
 		return "", false, nil
 	}
@@ -88,8 +86,8 @@ func ownerFromRepoFlag(flags []string) (string, bool) {
 	return "", false
 }
 
-// ownerFromRawArgs scans the pre-classification argument list for
-// --repo or -R followed by an owner/repo value (space-separated form).
+// ownerFromRawArgs scans the pre-classification argument list for repo flags
+// in both space-separated (--repo X, -R X) and equals (--repo=X, -R=X) forms.
 // Returns (owner, true, true) on success, ("", false, true) if a repo flag
 // was found but the value was unparseable or conflicting, or ("", false, false)
 // if no repo flag was found. Stops scanning at "--" (end-of-options).
@@ -100,8 +98,29 @@ func ownerFromRawArgs(rawArgs []string) (owner string, ok bool, sawFlag bool) {
 		if arg == "--" {
 			break
 		}
-		isRepo := arg == "--repo" || arg == "-R"
-		if !isRepo {
+
+		// Equals form: --repo=value or -R=value (including unparseable values).
+		if strings.HasPrefix(arg, "--repo=") || strings.HasPrefix(arg, "-R=") {
+			sawFlag = true
+			var value string
+			if strings.HasPrefix(arg, "--repo=") {
+				value = arg[len("--repo="):]
+			} else {
+				value = arg[len("-R="):]
+			}
+			owner, ok := parseOwnerRepo(value)
+			if !ok {
+				return "", false, true
+			}
+			if found != "" && !strings.EqualFold(found, owner) {
+				return "", false, true
+			}
+			found = owner
+			continue
+		}
+
+		// Space form: --repo value or -R value.
+		if arg != "--repo" && arg != "-R" {
 			continue
 		}
 		sawFlag = true

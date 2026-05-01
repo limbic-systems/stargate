@@ -441,6 +441,14 @@ func TestRepoFlagUnparseableBlocksFallthrough(t *testing.T) {
 			name: "--repo with invalid format",
 			cmd:  ghCmdWithRaw([]string{"--repo"}, []string{"pr", "list"}, []string{"--repo", "noslash", "pr", "list"}),
 		},
+		{
+			name: "equals-form --repo=$REPO (dynamic value)",
+			cmd:  ghCmdWithRaw([]string{"--repo=$REPO"}, []string{"pr", "list"}, []string{"--repo=$REPO", "pr", "list"}),
+		},
+		{
+			name: "equals-form -R=$REPO (dynamic value)",
+			cmd:  ghCmdWithRaw([]string{"-R=$REPO"}, []string{"pr", "list"}, []string{"-R=$REPO", "pr", "list"}),
+		},
 	}
 
 	ctx := context.Background()
@@ -692,6 +700,18 @@ func TestRepoFlagSpaceForm(t *testing.T) {
 			cmd:    ghCmd([]string{"--repo"}, []string{"pr", "list"}),
 			want:   "",
 			wantOK: false,
+		},
+		{
+			name:   "equals-form --repo=owner/repo in rawArgs",
+			cmd:    ghCmdWithRaw([]string{"--repo=derek/stargate"}, []string{"pr", "list"}, []string{"--repo=derek/stargate", "pr", "list"}),
+			want:   "derek",
+			wantOK: true,
+		},
+		{
+			name:   "equals-form -R=owner/repo in rawArgs",
+			cmd:    ghCmdWithRaw([]string{"-R=derek/stargate"}, []string{"pr", "list"}, []string{"-R=derek/stargate", "pr", "list"}),
+			want:   "derek",
+			wantOK: true,
 		},
 	}
 

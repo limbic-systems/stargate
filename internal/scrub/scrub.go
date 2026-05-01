@@ -135,8 +135,8 @@ func (s *Scrubber) CommandInfo(cmd types.CommandInfo) types.CommandInfo {
 		}
 	}
 
-	// Deep copy and redact RawArgs — contains the same data as Flags+Args
-	// before classification, so carries the same secret-exposure risk.
+	// Deep copy and redact RawArgs — the full pre-classification argument
+	// list, which may include values not present in Flags or Args.
 	if cmd.RawArgs != nil {
 		out.RawArgs = make([]string, len(cmd.RawArgs))
 		for i, arg := range cmd.RawArgs {
