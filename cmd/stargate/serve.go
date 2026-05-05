@@ -90,7 +90,7 @@ func handleServe(args []string, configPath string, verbose bool) int {
 	}
 
 	// Initialize telemetry.
-	tel, err := telemetry.Init(cfg.Telemetry)
+	tel, err := telemetry.Init(cfg.Telemetry, cfg.Latitude)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "serve: telemetry init: %v\n", err)
 		return 1

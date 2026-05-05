@@ -5,6 +5,7 @@ package telemetry
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -62,10 +63,10 @@ type Telemetry interface {
 // ClassifyResult holds the data needed for telemetry logging and metrics.
 // Defined here to avoid circular imports with the classifier package.
 type ClassifyResult struct {
-	Decision         string  // green/yellow/red
-	Action           string  // allow/deny/ask
-	RuleLevel        string  // matched rule tier
-	RuleReason       string  // matched rule reason
+	Decision         string // green/yellow/red
+	Action           string // allow/deny/ask
+	RuleLevel        string // matched rule tier
+	RuleReason       string // matched rule reason
 	TotalMs          float64
 	LLMCalled        bool
 	LLMDecision      string
@@ -84,7 +85,7 @@ type NoOpTelemetry struct{}
 
 var _ Telemetry = (*NoOpTelemetry)(nil)
 
-func (n *NoOpTelemetry) Shutdown(context.Context) error            { return nil }
+func (n *NoOpTelemetry) Shutdown(context.Context) error                    { return nil }
 func (n *NoOpTelemetry) LogClassification(context.Context, ClassifyResult) {}
 func (n *NoOpTelemetry) RecordClassification(string, string, float64)      {}
 func (n *NoOpTelemetry) RecordLLMCall(string, float64)                     {}
@@ -124,11 +125,16 @@ type LiveTelemetry struct {
 	logger         otellog.Logger
 	metrics        *metrics
 	traceMap       *ttlmap.TTLMap[string, string]
+
+	latitudeEnabled     bool
+	latitudeCaptureName string
+	latitudeTagsJSON    string
 }
 
-// Init creates a Telemetry instance. Returns NoOpTelemetry when disabled.
-func Init(cfg config.TelemetryConfig) (Telemetry, error) {
-	if !cfg.Enabled {
+// Init creates a Telemetry instance. Returns NoOpTelemetry when both
+// primary telemetry and Latitude are disabled.
+func Init(cfg config.TelemetryConfig, latitudeCfg config.LatitudeConfig) (Telemetry, error) {
+	if !cfg.Enabled && !latitudeCfg.Enabled {
 		return &NoOpTelemetry{}, nil
 	}
 
@@ -155,26 +161,70 @@ func Init(cfg config.TelemetryConfig) (Telemetry, error) {
 
 	lt := &LiveTelemetry{cfg: cfg}
 
-	// Build exporter options (shared auth).
-	exportOpts := buildExportOpts(cfg)
+	// Build exporter options (shared auth) — only when primary telemetry is
+	// enabled. When only Latitude is enabled, cfg.Endpoint may be empty and
+	// the resulting opts would be nonsensical; they are never used because
+	// cfg.ExportTraces/Metrics/Logs are all false.
+	var expOpts exportOpts
+	if cfg.Enabled {
+		expOpts = buildExportOpts(cfg)
+	}
 
-	// TracerProvider.
-	if cfg.ExportTraces {
-		traceExp, err := otlptracehttp.New(context.Background(), exportOpts.trace...)
-		if err != nil {
-			return nil, fmt.Errorf("telemetry: creating trace exporter: %w", err)
-		}
-		lt.tracerProvider = sdktrace.NewTracerProvider(
-			sdktrace.WithBatcher(traceExp),
+	// TracerProvider — created when either primary traces or Latitude is enabled.
+	needsTracer := cfg.ExportTraces || latitudeCfg.Enabled
+	if needsTracer {
+		var tpOpts []sdktrace.TracerProviderOption
+		tpOpts = append(tpOpts,
 			sdktrace.WithResource(res),
 			sdktrace.WithSampler(sdktrace.AlwaysSample()),
 		)
+
+		// Primary trace exporter.
+		if cfg.ExportTraces {
+			traceExp, err := otlptracehttp.New(context.Background(), expOpts.trace...)
+			if err != nil {
+				return nil, fmt.Errorf("telemetry: creating trace exporter: %w", err)
+			}
+			tpOpts = append(tpOpts, sdktrace.WithBatcher(traceExp))
+		}
+
+		// Latitude trace exporter.
+		if latitudeCfg.Enabled {
+			apiKey := os.Getenv("LATITUDE_API_KEY")
+			if apiKey == "" {
+				return nil, fmt.Errorf("telemetry: LATITUDE_API_KEY env var is required when latitude is enabled")
+			}
+			latitudeExp, err := otlptracehttp.New(context.Background(),
+				otlptracehttp.WithEndpointURL(latitudeCfg.Endpoint),
+				otlptracehttp.WithHeaders(map[string]string{
+					"Authorization":      "Bearer " + apiKey,
+					"X-Latitude-Project": latitudeCfg.ProjectSlug,
+				}),
+				otlptracehttp.WithTimeout(10*time.Second),
+			)
+			if err != nil {
+				return nil, fmt.Errorf("telemetry: creating latitude exporter: %w", err)
+			}
+			tpOpts = append(tpOpts, sdktrace.WithBatcher(latitudeExp))
+
+			lt.latitudeEnabled = true
+			lt.latitudeCaptureName = latitudeCfg.CaptureName
+			if len(latitudeCfg.Tags) > 0 {
+				tagsJSON, err := json.Marshal(latitudeCfg.Tags)
+				if err != nil {
+					return nil, fmt.Errorf("telemetry: marshaling latitude tags: %w", err)
+				}
+				lt.latitudeTagsJSON = string(tagsJSON)
+			}
+		}
+
+		lt.tracerProvider = sdktrace.NewTracerProvider(tpOpts...)
 		otel.SetTracerProvider(lt.tracerProvider)
 	}
 
 	// MeterProvider.
 	if cfg.ExportMetrics {
-		metricExp, err := otlpmetrichttp.New(context.Background(), exportOpts.metric...)
+		metricExp, err := otlpmetrichttp.New(context.Background(), expOpts.metric...)
 		if err != nil {
 			return nil, fmt.Errorf("telemetry: creating metric exporter: %w", err)
 		}
@@ -187,7 +237,7 @@ func Init(cfg config.TelemetryConfig) (Telemetry, error) {
 
 	// LoggerProvider.
 	if cfg.ExportLogs {
-		logExp, err := otlploghttp.New(context.Background(), exportOpts.log...)
+		logExp, err := otlploghttp.New(context.Background(), expOpts.log...)
 		if err != nil {
 			return nil, fmt.Errorf("telemetry: creating log exporter: %w", err)
 		}
