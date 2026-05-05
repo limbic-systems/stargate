@@ -313,6 +313,15 @@ subcommands = ["test", "run", "build", "init"]
 reason = "Safe bun subcommands."
 
 [[rules.green]]
+command = "uv"
+subcommands = ["version", "tree", "audit", "export", "help"]
+reason = "Safe uv read-only subcommands."
+
+[[rules.green]]
+commands = ["pydoc", "pydoc3"]
+reason = "Python documentation viewer (read-only)."
+
+[[rules.green]]
 commands = ["tsc", "tsx"]
 reason = "TypeScript compiler and runner."
 
@@ -380,15 +389,21 @@ reason = "Remote access commands require review."
 # --- Package management (remote code execution) ---
 
 [[rules.yellow]]
-commands = ["npm"]
+commands = ["npm", "bun"]
 subcommands = ["install", "i", "add", "uninstall", "remove"]
 llm_review = true
-reason = "npm package installation — LLM reviews package names."
+reason = "Package installation — LLM reviews package names."
 
 [[rules.yellow]]
-commands = ["npx", "bunx"]
+commands = ["npx", "bunx", "uvx", "pipx"]
 llm_review = true
-reason = "Package execution tools download and run arbitrary code from npm."
+reason = "Package execution tools download and run arbitrary code."
+
+[[rules.yellow]]
+command = "uv"
+subcommands = ["add", "remove", "sync", "lock", "build", "init", "pip", "publish", "python", "tool", "venv", "format", "run", "self"]
+llm_review = true
+reason = "uv package/environment management — LLM reviews the operation and targets."
 
 [[rules.yellow]]
 commands = ["pip", "pip3", "gem", "composer"]
