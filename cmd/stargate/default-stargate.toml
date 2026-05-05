@@ -591,6 +591,19 @@ reason = "Opens URLs or files with default handlers — could launch phishing pa
 # store_user_approvals = true
 
 # ---------------------------------------------------------------------------
+# Latitude — LLM evaluation via OTLP trace export
+# ---------------------------------------------------------------------------
+# When enabled, classification traces are sent to Latitude for LLM evaluation.
+# Requires LATITUDE_API_KEY env var.
+
+# [latitude]
+# enabled = false
+# project_slug = ""
+# capture_name = "stargate-classify"
+# endpoint = "https://ingest.latitude.so/v1/traces"
+# tags = []
+
+# ---------------------------------------------------------------------------
 # Telemetry — OpenTelemetry export
 # ---------------------------------------------------------------------------
 
