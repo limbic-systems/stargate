@@ -121,6 +121,9 @@ func TestYellowLLMReview(t *testing.T) {
 			if result.Decision != "yellow" {
 				t.Errorf("expected yellow, got %s (reason: %s)", result.Decision, result.Reason)
 			}
+			if result.Rule == nil || result.Rule.Level != "yellow" {
+				t.Errorf("expected explicit yellow rule match, got default fallback (reason: %s)", result.Reason)
+			}
 			if !result.LLMReview {
 				t.Errorf("expected LLMReview=true, got false (reason: %s)", result.Reason)
 			}
