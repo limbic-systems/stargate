@@ -63,22 +63,24 @@ func Open(ctx context.Context, cfg config.CorpusConfig) (*Corpus, error) {
 	db.SetMaxOpenConns(1)
 
 	pragmas := []string{
+		// busy_timeout first: the journal_mode switch below may need to acquire
+		// an exclusive lock (e.g., checkpointing an existing WAL), so the
+		// timeout must be in effect before that runs.
+		"PRAGMA busy_timeout=5000",
 		// DELETE journal: all data in the main file. WAL requires write access
 		// on open (recovery) which fails on full disks, hiding existing data.
 		"PRAGMA journal_mode=DELETE",
-		// tmpfs-backed: fsync is a no-op, so NORMAL sync is sufficient.
-		// Avoids redundant sync calls that the kernel would discard anyway.
+		// Corpus is a cache of past judgments — losing one entry on OS crash
+		// is acceptable. NORMAL avoids redundant fsync on every commit.
 		"PRAGMA synchronous=NORMAL",
-		// Multiple processes (server + CLI) may open the same DB file.
-		"PRAGMA busy_timeout=5000",
 		// 4KB pages (default) are fine for small row counts. Larger pages
 		// waste memory for a corpus that rarely exceeds a few hundred entries.
 		"PRAGMA page_size=4096",
 		// Keep recently-read pages in memory. 64 pages = 256KB — trivial
 		// footprint, avoids re-reading the same index pages on repeated queries.
 		"PRAGMA cache_size=-256",
-		// Temp tables/indices in memory (already tmpfs, but this avoids temp
-		// file creation which could fail under disk pressure).
+		// Temp tables/indices in memory — avoids temp file creation which
+		// could fail under disk pressure.
 		"PRAGMA temp_store=MEMORY",
 	}
 	for _, p := range pragmas {
@@ -121,15 +123,17 @@ func Open(ctx context.Context, cfg config.CorpusConfig) (*Corpus, error) {
 // Close shuts down the corpus in strict order:
 // 1. Cancel context (signals goroutines to stop)
 // 2. Wait for goroutines to exit
-// 3. WAL checkpoint
+// 3. WAL checkpoint (only if in WAL mode — skipped for DELETE mode)
 // 4. Close database
 func (c *Corpus) Close() error {
 	c.cancel()
 	c.wg.Wait()
 
-	if _, err := c.db.Exec("PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
-		// Log but don't fail — next Open recovers WAL automatically.
-		fmt.Fprintf(os.Stderr, "corpus: WAL checkpoint warning: %v\n", err)
+	var mode string
+	if err := c.db.QueryRow("PRAGMA journal_mode").Scan(&mode); err == nil && mode == "wal" {
+		if _, err := c.db.Exec("PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
+			fmt.Fprintf(os.Stderr, "corpus: WAL checkpoint warning: %v\n", err)
+		}
 	}
 
 	return c.db.Close()

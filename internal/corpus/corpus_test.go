@@ -135,9 +135,9 @@ func TestOpenMigratesWALToDelete(t *testing.T) {
 		 ast_summary, cwd, decision, reasoning, risk_factors,
 		 matched_rule, scopes_in_play, stargate_trace_id, session_id, agent)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		`[{"name":"git","subcommand":"status"}]`, "abc123",
-		"git status", "git", "", "git status", "/tmp",
-		"allow", "read-only git", "", "", "", "", "", ""); err != nil {
+		`[{"name":"git","subcommand":"status","flags":[],"context":"top_level"}]`,
+		"abc123", "git status", `["git"]`, `[]`, "git status", "/tmp",
+		"allow", "read-only git", `[]`, "", `[]`, "", "", ""); err != nil {
 		t.Fatalf("insert: %v", err)
 	}
 
@@ -180,7 +180,7 @@ func TestOpenMigratesWALToDelete(t *testing.T) {
 		t.Errorf("journal_mode = %q after migration, want delete", mode)
 	}
 
-	// Verify data from the stranded WAL was recovered.
+	// Verify data from the stranded WAL was recovered (including JSON fields).
 	entries, err := c.ExportAll()
 	if err != nil {
 		t.Fatalf("ExportAll: %v", err)
@@ -188,8 +188,15 @@ func TestOpenMigratesWALToDelete(t *testing.T) {
 	if len(entries) != 1 {
 		t.Fatalf("got %d entries after stranded WAL recovery, want 1", len(entries))
 	}
-	if entries[0].RawCommand != "git status" {
-		t.Errorf("entry.RawCommand = %q, want %q", entries[0].RawCommand, "git status")
+	e := entries[0]
+	if e.RawCommand != "git status" {
+		t.Errorf("RawCommand = %q, want %q", e.RawCommand, "git status")
+	}
+	if len(e.CommandNames) != 1 || e.CommandNames[0] != "git" {
+		t.Errorf("CommandNames = %v, want [git]", e.CommandNames)
+	}
+	if e.Decision != "allow" {
+		t.Errorf("Decision = %q, want allow", e.Decision)
 	}
 
 	// WAL file should be gone after migration to DELETE mode.
