@@ -313,10 +313,18 @@ func (lt *LiveTelemetry) Shutdown(ctx context.Context) error {
 // --- LiveTelemetry span, trace, and logging methods ---
 // Metrics are in metrics.go, logging in logger.go. Span/trace methods below.
 
-// --- LiveTelemetry span and trace methods ---
-
 func (lt *LiveTelemetry) StartClassifySpan(ctx context.Context) (context.Context, trace.Span) {
-	return lt.tracer.Start(ctx, "stargate.classify")
+	ctx, span := lt.tracer.Start(ctx, "stargate.classify")
+	// WARNING: All span attributes are exported to Latitude (third-party SaaS)
+	// when latitude.enabled = true. Do not add attributes containing command
+	// content, secrets, or other sensitive data to classification spans.
+	if lt.latitudeEnabled {
+		span.SetAttributes(attribute.String("latitude.capture.name", lt.latitudeCaptureName))
+		if lt.latitudeTagsJSON != "" {
+			span.SetAttributes(attribute.String("latitude.tags", lt.latitudeTagsJSON))
+		}
+	}
+	return ctx, span
 }
 
 func (lt *LiveTelemetry) StartSpan(ctx context.Context, name string) (context.Context, trace.Span) {

@@ -6,6 +6,7 @@ import (
 
 	"github.com/limbic-systems/stargate/internal/config"
 	"github.com/limbic-systems/stargate/internal/ttlmap"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
@@ -240,3 +241,81 @@ var errForTest = errString("test error")
 type errString string
 
 func (e errString) Error() string { return string(e) }
+
+func newLatitudeTracer(t *testing.T, captureName, tagsJSON string) (*LiveTelemetry, *tracetest.InMemoryExporter) {
+	t.Helper()
+	lt, exp := newTestTracer(t)
+	lt.latitudeEnabled = true
+	lt.latitudeCaptureName = captureName
+	lt.latitudeTagsJSON = tagsJSON
+	return lt, exp
+}
+
+func TestStartClassifySpan_LatitudeAttributes(t *testing.T) {
+	lt, exporter := newLatitudeTracer(t, "stargate-classify", `["production","v2"]`)
+
+	_, span := lt.StartClassifySpan(context.Background())
+	span.End()
+
+	spans := exporter.GetSpans()
+	if len(spans) != 1 {
+		t.Fatalf("span count: got %d, want 1", len(spans))
+	}
+
+	attrs := spans[0].Attributes
+	assertAttrStr(t, attrs, "latitude.capture.name", "stargate-classify")
+	assertAttrStr(t, attrs, "latitude.tags", `["production","v2"]`)
+}
+
+func TestStartClassifySpan_NoLatitudeAttributes(t *testing.T) {
+	lt, exporter := newTestTracer(t)
+
+	_, span := lt.StartClassifySpan(context.Background())
+	span.End()
+
+	spans := exporter.GetSpans()
+	if len(spans) != 1 {
+		t.Fatalf("span count: got %d, want 1", len(spans))
+	}
+
+	for _, attr := range spans[0].Attributes {
+		key := string(attr.Key)
+		if key == "latitude.capture.name" || key == "latitude.tags" {
+			t.Errorf("unexpected Latitude attribute %q when disabled", key)
+		}
+	}
+}
+
+func TestStartClassifySpan_LatitudeNoTags(t *testing.T) {
+	lt, exporter := newLatitudeTracer(t, "stargate-classify", "")
+
+	_, span := lt.StartClassifySpan(context.Background())
+	span.End()
+
+	spans := exporter.GetSpans()
+	if len(spans) != 1 {
+		t.Fatalf("span count: got %d, want 1", len(spans))
+	}
+
+	attrs := spans[0].Attributes
+	assertAttrStr(t, attrs, "latitude.capture.name", "stargate-classify")
+
+	for _, attr := range attrs {
+		if string(attr.Key) == "latitude.tags" {
+			t.Error("latitude.tags should not be set when tags are empty")
+		}
+	}
+}
+
+func assertAttrStr(t *testing.T, attrs []attribute.KeyValue, key, want string) {
+	t.Helper()
+	for _, attr := range attrs {
+		if string(attr.Key) == key {
+			if got := attr.Value.AsString(); got != want {
+				t.Errorf("attribute %q: got %q, want %q", key, got, want)
+			}
+			return
+		}
+	}
+	t.Errorf("attribute %q not found", key)
+}
