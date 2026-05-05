@@ -307,6 +307,20 @@ func TestStartClassifySpan_LatitudeNoTags(t *testing.T) {
 	}
 }
 
+func TestClassifySpan_SessionID(t *testing.T) {
+	lt, exporter := newTestTracer(t)
+
+	_, span := lt.StartClassifySpan(context.Background())
+	span.SetAttributes(attribute.String("session.id", "sess-abc"))
+	span.End()
+
+	spans := exporter.GetSpans()
+	if len(spans) != 1 {
+		t.Fatalf("span count: got %d, want 1", len(spans))
+	}
+	assertAttrStr(t, spans[0].Attributes, "session.id", "sess-abc")
+}
+
 func assertAttrStr(t *testing.T, attrs []attribute.KeyValue, key, want string) {
 	t.Helper()
 	for _, attr := range attrs {
