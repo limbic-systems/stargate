@@ -109,8 +109,14 @@ func TestYellowLLMReview(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.command, func(t *testing.T) {
-			file, _ := parser.Parse(tt.command, "bash")
+			file, err := parser.Parse(tt.command, "bash")
+			if err != nil {
+				t.Fatalf("parse %q: %v", tt.command, err)
+			}
 			cmds := parser.Walk(file, walkerCfg)
+			if len(cmds) == 0 {
+				t.Fatalf("walk %q: no commands found", tt.command)
+			}
 			result := engine.Evaluate(context.Background(), cmds, tt.command, "")
 			if result.Decision != "yellow" {
 				t.Errorf("expected yellow, got %s (reason: %s)", result.Decision, result.Reason)
