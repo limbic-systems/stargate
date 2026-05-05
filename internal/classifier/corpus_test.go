@@ -79,9 +79,10 @@ func TestCorpus(t *testing.T) {
 	}
 }
 
-// TestYellowLLMReview verifies that YELLOW rules for package managers have
-// llm_review=true in the real stargate.toml config. Catches regressions where
-// a rule accidentally drops LLM review.
+// TestYellowLLMReview verifies that YELLOW rules for package managers,
+// execution tools, and module-importing commands have llm_review=true in
+// the real stargate.toml config. Catches regressions where a rule
+// accidentally drops LLM review.
 func TestYellowLLMReview(t *testing.T) {
 	cfg, err := config.Load("../../stargate.toml")
 	if err != nil {
