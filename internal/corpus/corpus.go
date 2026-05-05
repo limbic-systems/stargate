@@ -59,7 +59,8 @@ func Open(ctx context.Context, cfg config.CorpusConfig) (*Corpus, error) {
 		return nil, fmt.Errorf("corpus: open %q: %w", dbPath, err)
 	}
 
-	// Single connection serializes all operations — no concurrent read/write.
+	// One connection per Corpus instance. Cross-process concurrency (server +
+	// CLI) is handled by busy_timeout below, not by connection pooling.
 	db.SetMaxOpenConns(1)
 
 	pragmas := []string{

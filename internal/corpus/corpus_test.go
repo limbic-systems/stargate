@@ -103,6 +103,46 @@ func TestOpenPragmas(t *testing.T) {
 	}
 }
 
+func TestOpenWaitsBusyTimeout(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "busy.db")
+
+	// Create the DB and schema so it exists for the concurrent open.
+	cfg := testCorpusConfig(dbPath)
+	c1, err := Open(t.Context(), cfg)
+	if err != nil {
+		t.Fatalf("first Open: %v", err)
+	}
+
+	// Hold an exclusive lock via a write transaction.
+	tx, err := c1.DB().Begin()
+	if err != nil {
+		t.Fatalf("begin tx: %v", err)
+	}
+	if _, err := tx.Exec("INSERT INTO precedents (signature, signature_hash, raw_command, command_names, flags, ast_summary, cwd, decision, reasoning, risk_factors, matched_rule, scopes_in_play, stargate_trace_id, session_id, agent) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		`[{"name":"hold"}]`, "hold", "hold", `["hold"]`, `[]`, "hold", "/tmp", "allow", "", `[]`, "", `[]`, "", "", ""); err != nil {
+		t.Fatalf("exec in tx: %v", err)
+	}
+
+	// Release the lock after a short delay in a goroutine.
+	done := make(chan struct{})
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		tx.Commit() //nolint:errcheck
+		close(done)
+	}()
+
+	// Second open must wait (busy_timeout) rather than fail immediately.
+	c2, err := Open(t.Context(), cfg)
+	if err != nil {
+		t.Fatalf("second Open should succeed after busy wait, got: %v", err)
+	}
+	c2.Close()
+
+	<-done
+	c1.Close()
+}
+
 func TestOpenMigratesWALToDelete(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "migrate.db")
