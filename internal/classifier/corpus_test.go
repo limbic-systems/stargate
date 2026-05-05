@@ -109,7 +109,7 @@ func TestYellowLLMReview(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.command, func(t *testing.T) {
-			file, err := parser.Parse(tt.command, "bash")
+			file, err := parser.Parse(tt.command, cfg.Parser.Dialect)
 			if err != nil {
 				t.Fatalf("parse %q: %v", tt.command, err)
 			}
