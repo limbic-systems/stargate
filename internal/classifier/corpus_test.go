@@ -10,6 +10,8 @@ import (
 
 	"github.com/limbic-systems/stargate/internal/classifier"
 	"github.com/limbic-systems/stargate/internal/config"
+	"github.com/limbic-systems/stargate/internal/parser"
+	"github.com/limbic-systems/stargate/internal/rules"
 )
 
 // TestCorpus classifies every command in the testdata corpus files against the
@@ -72,6 +74,59 @@ func TestCorpus(t *testing.T) {
 
 			if err := scanner.Err(); err != nil {
 				t.Fatalf("scan %s: %v", file, err)
+			}
+		})
+	}
+}
+
+// TestYellowLLMReview verifies that YELLOW rules for package managers,
+// execution tools, and module-importing commands have llm_review=true in
+// the real stargate.toml config. Catches regressions where a rule
+// accidentally drops LLM review.
+func TestYellowLLMReview(t *testing.T) {
+	cfg, err := config.Load("../../stargate.toml")
+	if err != nil {
+		t.Fatalf("failed to load stargate.toml: %v", err)
+	}
+
+	engine, err := rules.NewEngine(cfg)
+	if err != nil {
+		t.Fatalf("rules engine init failed: %v", err)
+	}
+
+	walkerCfg := parser.NewWalkerConfig(cfg.Wrappers, cfg.Commands)
+
+	tests := []struct {
+		command string
+	}{
+		{"bun install express"},
+		{"uv add requests"},
+		{"uvx black ."},
+		{"pipx run ruff check ."},
+		{"pydoc json"},
+		{"npm install lodash"},
+		{"npx prettier ."},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.command, func(t *testing.T) {
+			file, err := parser.Parse(tt.command, cfg.Parser.Dialect)
+			if err != nil {
+				t.Fatalf("parse %q: %v", tt.command, err)
+			}
+			cmds := parser.Walk(file, walkerCfg)
+			if len(cmds) == 0 {
+				t.Fatalf("walk %q: no commands found", tt.command)
+			}
+			result := engine.Evaluate(context.Background(), cmds, tt.command, "")
+			if result.Decision != "yellow" {
+				t.Errorf("expected yellow, got %s (reason: %s)", result.Decision, result.Reason)
+			}
+			if result.Rule == nil || result.Rule.Level != "yellow" {
+				t.Errorf("expected explicit yellow rule match, got default fallback (reason: %s)", result.Reason)
+			}
+			if !result.LLMReview {
+				t.Errorf("expected LLMReview=true, got false (reason: %s)", result.Reason)
 			}
 		})
 	}
