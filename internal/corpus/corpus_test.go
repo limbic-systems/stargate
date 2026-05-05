@@ -106,8 +106,10 @@ func TestOpenPragmas(t *testing.T) {
 func TestOpenMigratesWALToDelete(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "migrate.db")
+	walPath := dbPath + "-wal"
 
-	// Create a WAL-mode database with data (simulates pre-migration state).
+	// Create a WAL-mode database with autocheckpoint disabled so data
+	// stays in the WAL file and is NOT checkpointed into the main DB.
 	db, err := openRawDB(dbPath)
 	if err != nil {
 		t.Fatalf("open raw db: %v", err)
@@ -115,9 +117,19 @@ func TestOpenMigratesWALToDelete(t *testing.T) {
 	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
 		t.Fatalf("set WAL: %v", err)
 	}
+	if _, err := db.Exec("PRAGMA wal_autocheckpoint=0"); err != nil {
+		t.Fatalf("disable autocheckpoint: %v", err)
+	}
 	if err := createSchema(db); err != nil {
 		t.Fatalf("create schema: %v", err)
 	}
+
+	// Record schema-only state of the main DB file.
+	schemaSnapshot, err := os.ReadFile(dbPath)
+	if err != nil {
+		t.Fatalf("read schema snapshot: %v", err)
+	}
+
 	if _, err := db.Exec(`INSERT INTO precedents
 		(signature, signature_hash, raw_command, command_names, flags,
 		 ast_summary, cwd, decision, reasoning, risk_factors,
@@ -128,9 +140,30 @@ func TestOpenMigratesWALToDelete(t *testing.T) {
 		"allow", "read-only git", "", "", "", "", "", ""); err != nil {
 		t.Fatalf("insert: %v", err)
 	}
+
+	// Capture the WAL (which holds the INSERT since autocheckpoint is off).
+	walSnapshot, err := os.ReadFile(walPath)
+	if err != nil {
+		t.Fatalf("read WAL: %v", err)
+	}
+	if len(walSnapshot) == 0 {
+		t.Fatal("WAL should contain data before close")
+	}
+
+	// Close checkpoints the WAL into the main file and removes it.
 	db.Close()
 
-	// Reopen via Open() which switches to DELETE mode.
+	// Restore stranded-WAL state: schema-only main file + WAL with data.
+	// This simulates the crash/disk-full scenario where WAL was never
+	// checkpointed into the main DB.
+	if err := os.WriteFile(dbPath, schemaSnapshot, 0600); err != nil {
+		t.Fatalf("restore schema snapshot: %v", err)
+	}
+	if err := os.WriteFile(walPath, walSnapshot, 0600); err != nil {
+		t.Fatalf("restore WAL: %v", err)
+	}
+
+	// Reopen via Open() which must recover the WAL then switch to DELETE.
 	cfg := testCorpusConfig(dbPath)
 	c, err := Open(t.Context(), cfg)
 	if err != nil {
@@ -147,16 +180,21 @@ func TestOpenMigratesWALToDelete(t *testing.T) {
 		t.Errorf("journal_mode = %q after migration, want delete", mode)
 	}
 
-	// Verify data survived the migration.
+	// Verify data from the stranded WAL was recovered.
 	entries, err := c.ExportAll()
 	if err != nil {
 		t.Fatalf("ExportAll: %v", err)
 	}
 	if len(entries) != 1 {
-		t.Fatalf("got %d entries after WAL→DELETE migration, want 1", len(entries))
+		t.Fatalf("got %d entries after stranded WAL recovery, want 1", len(entries))
 	}
 	if entries[0].RawCommand != "git status" {
 		t.Errorf("entry.RawCommand = %q, want %q", entries[0].RawCommand, "git status")
+	}
+
+	// WAL file should be gone after migration to DELETE mode.
+	if _, err := os.Stat(walPath); !os.IsNotExist(err) {
+		t.Errorf("WAL file should not exist after DELETE migration, got err=%v", err)
 	}
 }
 
