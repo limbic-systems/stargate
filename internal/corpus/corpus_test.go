@@ -114,30 +114,32 @@ func TestOpenWaitsBusyTimeout(t *testing.T) {
 		t.Fatalf("first Open: %v", err)
 	}
 
-	// Hold an exclusive lock via a write transaction.
-	tx, err := c1.DB().Begin()
-	if err != nil {
-		t.Fatalf("begin tx: %v", err)
-	}
-	if _, err := tx.Exec("INSERT INTO precedents (signature, signature_hash, raw_command, command_names, flags, ast_summary, cwd, decision, reasoning, risk_factors, matched_rule, scopes_in_play, stargate_trace_id, session_id, agent) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		`[{"name":"hold"}]`, "hold", "hold", `["hold"]`, `[]`, "hold", "/tmp", "allow", "", `[]`, "", `[]`, "", "", ""); err != nil {
-		t.Fatalf("exec in tx: %v", err)
+	// Hold an EXCLUSIVE lock — this blocks all other connections including
+	// the journal_mode switch in Open() which requires an exclusive lock.
+	if _, err := c1.DB().Exec("BEGIN EXCLUSIVE"); err != nil {
+		t.Fatalf("begin exclusive: %v", err)
 	}
 
 	// Release the lock after a short delay in a goroutine.
 	done := make(chan struct{})
 	go func() {
 		time.Sleep(200 * time.Millisecond)
-		tx.Commit() //nolint:errcheck
+		c1.DB().Exec("COMMIT") //nolint:errcheck
 		close(done)
 	}()
 
 	// Second open must wait (busy_timeout) rather than fail immediately.
+	start := time.Now()
 	c2, err := Open(t.Context(), cfg)
+	elapsed := time.Since(start)
 	if err != nil {
 		t.Fatalf("second Open should succeed after busy wait, got: %v", err)
 	}
 	c2.Close()
+
+	if elapsed < 150*time.Millisecond {
+		t.Errorf("Open returned in %v, expected >= 150ms wait for lock release", elapsed)
+	}
 
 	<-done
 	c1.Close()

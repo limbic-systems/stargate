@@ -63,22 +63,34 @@ func Open(ctx context.Context, cfg config.CorpusConfig) (*Corpus, error) {
 	// CLI) is handled by busy_timeout below, not by connection pooling.
 	db.SetMaxOpenConns(1)
 
+	// busy_timeout first: the journal_mode switch below may need to acquire
+	// an exclusive lock (e.g., checkpointing an existing WAL), so the
+	// timeout must be in effect before that runs.
+	if _, err := db.Exec("PRAGMA busy_timeout=5000"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("corpus: set busy_timeout: %w", err)
+	}
+
+	// Switch to DELETE journal mode. PRAGMA journal_mode reports failure by
+	// returning the current mode rather than raising a SQL error, so we must
+	// read the result to confirm the switch succeeded.
+	var mode string
+	if err := db.QueryRow("PRAGMA journal_mode=DELETE").Scan(&mode); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("corpus: set journal_mode: %w", err)
+	}
+	if mode != "delete" {
+		db.Close()
+		return nil, fmt.Errorf("corpus: journal_mode switch failed (got %q, want delete)", mode)
+	}
+
 	pragmas := []string{
-		// busy_timeout first: the journal_mode switch below may need to acquire
-		// an exclusive lock (e.g., checkpointing an existing WAL), so the
-		// timeout must be in effect before that runs.
-		"PRAGMA busy_timeout=5000",
-		// DELETE journal: all data in the main file. WAL requires write access
-		// on open (recovery) which fails on full disks, hiding existing data.
-		"PRAGMA journal_mode=DELETE",
 		// Corpus is a cache of past judgments — losing one entry on OS crash
 		// is acceptable. NORMAL avoids redundant fsync on every commit.
 		"PRAGMA synchronous=NORMAL",
-		// 4KB pages (default) are fine for small row counts. Larger pages
-		// waste memory for a corpus that rarely exceeds a few hundred entries.
+		// 4KB pages (default) are fine for small row counts.
 		"PRAGMA page_size=4096",
-		// Keep recently-read pages in memory. 64 pages = 256KB — trivial
-		// footprint, avoids re-reading the same index pages on repeated queries.
+		// 64 pages = 256KB in-memory page cache.
 		"PRAGMA cache_size=-256",
 		// Temp tables/indices in memory — avoids temp file creation which
 		// could fail under disk pressure.
