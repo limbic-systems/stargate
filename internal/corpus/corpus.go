@@ -71,17 +71,22 @@ func Open(ctx context.Context, cfg config.CorpusConfig) (*Corpus, error) {
 		return nil, fmt.Errorf("corpus: set busy_timeout: %w", err)
 	}
 
-	// Switch to DELETE journal mode. PRAGMA journal_mode reports failure by
-	// returning the current mode rather than raising a SQL error, so we must
-	// read the result to confirm the switch succeeded.
+	// Only switch journal mode if not already DELETE — avoids taking an
+	// exclusive lock on every Open() when the DB was already migrated.
 	var mode string
-	if err := db.QueryRow("PRAGMA journal_mode=DELETE").Scan(&mode); err != nil {
+	if err := db.QueryRow("PRAGMA journal_mode").Scan(&mode); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("corpus: set journal_mode: %w", err)
+		return nil, fmt.Errorf("corpus: query journal_mode: %w", err)
 	}
 	if mode != "delete" {
-		db.Close()
-		return nil, fmt.Errorf("corpus: journal_mode switch failed (got %q, want delete)", mode)
+		if err := db.QueryRow("PRAGMA journal_mode=DELETE").Scan(&mode); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("corpus: set journal_mode: %w", err)
+		}
+		if mode != "delete" {
+			db.Close()
+			return nil, fmt.Errorf("corpus: journal_mode switch failed (got %q, want delete)", mode)
+		}
 	}
 
 	pragmas := []string{
