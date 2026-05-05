@@ -10,3 +10,5 @@ mkdir -p /tmp/test	green
 uv version	green
 uv tree	green
 uv audit	green
+uv export	green
+uv help	green
