@@ -138,22 +138,12 @@ func Open(ctx context.Context, cfg config.CorpusConfig) (*Corpus, error) {
 	return c, nil
 }
 
-// Close shuts down the corpus in strict order:
-// 1. Cancel context (signals goroutines to stop)
-// 2. Wait for goroutines to exit
-// 3. WAL checkpoint (only if in WAL mode — skipped for DELETE mode)
-// 4. Close database
+// Close shuts down the corpus: cancels background goroutines, waits for
+// them to exit, then closes the database. No WAL checkpoint is needed
+// because Open() guarantees DELETE journal mode.
 func (c *Corpus) Close() error {
 	c.cancel()
 	c.wg.Wait()
-
-	var mode string
-	if err := c.db.QueryRow("PRAGMA journal_mode").Scan(&mode); err == nil && mode == "wal" {
-		if _, err := c.db.Exec("PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
-			fmt.Fprintf(os.Stderr, "corpus: WAL checkpoint warning: %v\n", err)
-		}
-	}
-
 	return c.db.Close()
 }
 

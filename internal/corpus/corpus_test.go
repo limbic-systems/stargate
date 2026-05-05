@@ -88,9 +88,10 @@ func TestOpenPragmas(t *testing.T) {
 		want   string
 	}{
 		{"journal_mode", "delete"},
-		{"synchronous", "1"},   // NORMAL = 1
-		{"temp_store", "2"},    // MEMORY = 2
-		{"cache_size", "-256"}, // 256KB
+		{"synchronous", "1"},    // NORMAL = 1
+		{"temp_store", "2"},     // MEMORY = 2
+		{"cache_size", "-256"},  // 256KB
+		{"page_size", "4096"},
 	}
 	for _, tt := range tests {
 		var got string
