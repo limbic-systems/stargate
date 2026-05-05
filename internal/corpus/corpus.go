@@ -59,19 +59,33 @@ func Open(ctx context.Context, cfg config.CorpusConfig) (*Corpus, error) {
 		return nil, fmt.Errorf("corpus: open %q: %w", dbPath, err)
 	}
 
-	// Single connection serializes all operations. WAL mode is still enabled
-	// for crash recovery and to avoid journal locking, but concurrent read/write
-	// is not leveraged (acceptable for localhost single-user load profile).
+	// Single connection serializes all operations — no concurrent read/write.
 	db.SetMaxOpenConns(1)
 
-	// Enable WAL mode and set busy timeout.
-	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("corpus: enable WAL mode: %w", err)
+	pragmas := []string{
+		// DELETE journal: all data in the main file. WAL requires write access
+		// on open (recovery) which fails on full disks, hiding existing data.
+		"PRAGMA journal_mode=DELETE",
+		// tmpfs-backed: fsync is a no-op, so NORMAL sync is sufficient.
+		// Avoids redundant sync calls that the kernel would discard anyway.
+		"PRAGMA synchronous=NORMAL",
+		// Single-writer, no contention possible.
+		"PRAGMA busy_timeout=1000",
+		// 4KB pages (default) are fine for small row counts. Larger pages
+		// waste memory for a corpus that rarely exceeds a few hundred entries.
+		"PRAGMA page_size=4096",
+		// Keep recently-read pages in memory. 64 pages = 256KB — trivial
+		// footprint, avoids re-reading the same index pages on repeated queries.
+		"PRAGMA cache_size=-256",
+		// Temp tables/indices in memory (already tmpfs, but this avoids temp
+		// file creation which could fail under disk pressure).
+		"PRAGMA temp_store=MEMORY",
 	}
-	if _, err := db.Exec("PRAGMA busy_timeout=5000"); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("corpus: set busy_timeout: %w", err)
+	for _, p := range pragmas {
+		if _, err := db.Exec(p); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("corpus: %s: %w", p, err)
+		}
 	}
 
 	// Create schema.

@@ -62,7 +62,7 @@ func TestOpenCreatesDBAndTables(t *testing.T) {
 	}
 }
 
-func TestOpenWALMode(t *testing.T) {
+func TestOpenPragmas(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.db")
 	cfg := testCorpusConfig(dbPath)
@@ -73,13 +73,23 @@ func TestOpenWALMode(t *testing.T) {
 	}
 	defer c.Close()
 
-	var mode string
-	err = c.DB().QueryRow("PRAGMA journal_mode").Scan(&mode)
-	if err != nil {
-		t.Fatalf("query journal_mode: %v", err)
+	tests := []struct {
+		pragma string
+		want   string
+	}{
+		{"journal_mode", "delete"},
+		{"synchronous", "1"}, // NORMAL = 1
+		{"temp_store", "2"},  // MEMORY = 2
 	}
-	if mode != "wal" {
-		t.Errorf("journal_mode = %q, want wal", mode)
+	for _, tt := range tests {
+		var got string
+		err := c.DB().QueryRow("PRAGMA " + tt.pragma).Scan(&got)
+		if err != nil {
+			t.Fatalf("PRAGMA %s: %v", tt.pragma, err)
+		}
+		if got != tt.want {
+			t.Errorf("PRAGMA %s = %q, want %q", tt.pragma, got, tt.want)
+		}
 	}
 }
 
