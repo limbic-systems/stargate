@@ -593,7 +593,8 @@ reason = "Opens URLs or files with default handlers — could launch phishing pa
 # ---------------------------------------------------------------------------
 # Latitude — LLM evaluation via OTLP trace export
 # ---------------------------------------------------------------------------
-# When enabled, classification traces are sent to Latitude for LLM evaluation.
+# When enabled, all spans (classification, feedback, HTTP) are sent to Latitude
+# for LLM evaluation.
 # Requires LATITUDE_API_KEY env var.
 
 # [latitude]

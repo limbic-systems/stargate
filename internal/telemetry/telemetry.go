@@ -180,7 +180,7 @@ func Init(cfg config.TelemetryConfig, latitudeCfg config.LatitudeConfig) (Teleme
 		)
 
 		// Primary trace exporter.
-		if cfg.ExportTraces {
+		if cfg.Enabled && cfg.ExportTraces {
 			traceExp, err := otlptracehttp.New(context.Background(), expOpts.trace...)
 			if err != nil {
 				return nil, fmt.Errorf("telemetry: creating trace exporter: %w", err)
