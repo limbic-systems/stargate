@@ -4,3 +4,8 @@ pip install requests	yellow
 ssh user@host	yellow
 unknown_command	yellow
 make build	yellow
+bun install express	yellow
+uv add requests	yellow
+uvx black .	yellow
+pipx run ruff check .	yellow
+pydoc json	yellow

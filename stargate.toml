@@ -318,10 +318,6 @@ subcommands = ["version", "tree", "audit", "export", "help"]
 reason = "Safe uv read-only subcommands."
 
 [[rules.green]]
-commands = ["pydoc", "pydoc3"]
-reason = "Python documentation viewer (read-only)."
-
-[[rules.green]]
 commands = ["tsc", "tsx"]
 reason = "TypeScript compiler and runner."
 
@@ -455,6 +451,11 @@ llm_review = true
 reason = "awk can write to files via internal redirections — LLM reviews the program."
 
 # --- Command execution ---
+
+[[rules.yellow]]
+commands = ["pydoc", "pydoc3"]
+llm_review = true
+reason = "pydoc imports modules to introspect them, executing top-level code."
 
 [[rules.yellow]]
 commands = ["python", "python3", "ruby", "perl"]

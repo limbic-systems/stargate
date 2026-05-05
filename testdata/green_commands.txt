@@ -7,3 +7,6 @@ echo hello	green
 pwd	green
 go test ./...	green
 mkdir -p /tmp/test	green
+uv version	green
+uv tree	green
+uv audit	green
