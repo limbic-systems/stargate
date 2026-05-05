@@ -93,7 +93,7 @@ func TestYellowLLMReview(t *testing.T) {
 		t.Fatalf("rules engine init failed: %v", err)
 	}
 
-	walkerCfg := parser.NewWalkerConfig(config.DefaultWrappers(), config.DefaultCommandFlags())
+	walkerCfg := parser.NewWalkerConfig(cfg.Wrappers, cfg.Commands)
 
 	tests := []struct {
 		command string
