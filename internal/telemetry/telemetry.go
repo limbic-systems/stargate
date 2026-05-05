@@ -190,6 +190,9 @@ func Init(cfg config.TelemetryConfig, latitudeCfg config.LatitudeConfig) (Teleme
 
 		// Latitude trace exporter.
 		if latitudeCfg.Enabled {
+			if u, _ := url.Parse(latitudeCfg.Endpoint); u != nil && u.Scheme == "http" {
+				fmt.Fprintf(os.Stderr, "telemetry: WARNING: latitude endpoint %q uses http:// — API key will be transmitted in plaintext\n", latitudeCfg.Endpoint)
+			}
 			apiKey := os.Getenv("LATITUDE_API_KEY")
 			if apiKey == "" {
 				return nil, fmt.Errorf("telemetry: LATITUDE_API_KEY env var is required when latitude is enabled")
@@ -222,8 +225,8 @@ func Init(cfg config.TelemetryConfig, latitudeCfg config.LatitudeConfig) (Teleme
 		otel.SetTracerProvider(lt.tracerProvider)
 	}
 
-	// MeterProvider.
-	if cfg.ExportMetrics {
+	// MeterProvider — only when primary telemetry is enabled (expOpts requires it).
+	if cfg.Enabled && cfg.ExportMetrics {
 		metricExp, err := otlpmetrichttp.New(context.Background(), expOpts.metric...)
 		if err != nil {
 			return nil, fmt.Errorf("telemetry: creating metric exporter: %w", err)
@@ -235,8 +238,8 @@ func Init(cfg config.TelemetryConfig, latitudeCfg config.LatitudeConfig) (Teleme
 		otel.SetMeterProvider(lt.meterProvider)
 	}
 
-	// LoggerProvider.
-	if cfg.ExportLogs {
+	// LoggerProvider — only when primary telemetry is enabled (expOpts requires it).
+	if cfg.Enabled && cfg.ExportLogs {
 		logExp, err := otlploghttp.New(context.Background(), expOpts.log...)
 		if err != nil {
 			return nil, fmt.Errorf("telemetry: creating log exporter: %w", err)
