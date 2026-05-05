@@ -69,8 +69,8 @@ func Open(ctx context.Context, cfg config.CorpusConfig) (*Corpus, error) {
 		// tmpfs-backed: fsync is a no-op, so NORMAL sync is sufficient.
 		// Avoids redundant sync calls that the kernel would discard anyway.
 		"PRAGMA synchronous=NORMAL",
-		// Single-writer, no contention possible.
-		"PRAGMA busy_timeout=1000",
+		// Multiple processes (server + CLI) may open the same DB file.
+		"PRAGMA busy_timeout=5000",
 		// 4KB pages (default) are fine for small row counts. Larger pages
 		// waste memory for a corpus that rarely exceeds a few hundred entries.
 		"PRAGMA page_size=4096",

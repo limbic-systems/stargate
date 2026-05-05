@@ -1,6 +1,7 @@
 package corpus
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 )
@@ -141,5 +142,21 @@ func TestRecent_SinceFilter(t *testing.T) {
 	}
 	if entries[0].RawCommand != "cmdfresh" {
 		t.Errorf("expected cmdfresh, got %q", entries[0].RawCommand)
+	}
+}
+
+func TestExportAll_EmptyCorpusReturnsEmptyArray(t *testing.T) {
+	c := openTestCorpus(t)
+
+	entries, err := c.ExportAll()
+	if err != nil {
+		t.Fatalf("ExportAll: %v", err)
+	}
+	b, err := json.Marshal(entries)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	if string(b) != "[]" {
+		t.Errorf("empty ExportAll JSON = %s, want []", b)
 	}
 }

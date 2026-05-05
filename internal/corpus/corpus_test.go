@@ -2,6 +2,7 @@ package corpus
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
@@ -15,6 +16,15 @@ import (
 
 func boolPtr(b bool) *bool { return &b }
 func intPtr(i int) *int    { return &i }
+
+func openRawDB(path string) (*sql.DB, error) {
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(1)
+	return db, nil
+}
 
 func testCorpusConfig(path string) config.CorpusConfig {
 	return config.CorpusConfig{
@@ -90,6 +100,63 @@ func TestOpenPragmas(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("PRAGMA %s = %q, want %q", tt.pragma, got, tt.want)
 		}
+	}
+}
+
+func TestOpenMigratesWALToDelete(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "migrate.db")
+
+	// Create a WAL-mode database with data (simulates pre-migration state).
+	db, err := openRawDB(dbPath)
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
+		t.Fatalf("set WAL: %v", err)
+	}
+	if err := createSchema(db); err != nil {
+		t.Fatalf("create schema: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO precedents
+		(signature, signature_hash, raw_command, command_names, flags,
+		 ast_summary, cwd, decision, reasoning, risk_factors,
+		 matched_rule, scopes_in_play, stargate_trace_id, session_id, agent)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`[{"name":"git","subcommand":"status"}]`, "abc123",
+		"git status", "git", "", "git status", "/tmp",
+		"allow", "read-only git", "", "", "", "", "", ""); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	db.Close()
+
+	// Reopen via Open() which switches to DELETE mode.
+	cfg := testCorpusConfig(dbPath)
+	c, err := Open(t.Context(), cfg)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer c.Close()
+
+	// Verify journal mode migrated.
+	var mode string
+	if err := c.DB().QueryRow("PRAGMA journal_mode").Scan(&mode); err != nil {
+		t.Fatalf("query journal_mode: %v", err)
+	}
+	if mode != "delete" {
+		t.Errorf("journal_mode = %q after migration, want delete", mode)
+	}
+
+	// Verify data survived the migration.
+	entries, err := c.ExportAll()
+	if err != nil {
+		t.Fatalf("ExportAll: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("got %d entries after WAL→DELETE migration, want 1", len(entries))
+	}
+	if entries[0].RawCommand != "git status" {
+		t.Errorf("entry.RawCommand = %q, want %q", entries[0].RawCommand, "git status")
 	}
 }
 
