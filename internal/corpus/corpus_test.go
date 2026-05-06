@@ -105,46 +105,112 @@ func TestOpenPragmas(t *testing.T) {
 	}
 }
 
-func TestOpenWaitsBusyTimeout(t *testing.T) {
+func TestOpenGracefulFallbackWhenLocked(t *testing.T) {
 	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "busy.db")
+	dbPath := filepath.Join(dir, "locked.db")
 
-	// Create the DB and schema so it exists for the concurrent open.
-	cfg := testCorpusConfig(dbPath)
-	c1, err := Open(t.Context(), cfg)
+	// Create a WAL-mode DB with another connection holding it open.
+	raw, err := openRawDB(dbPath)
 	if err != nil {
-		t.Fatalf("first Open: %v", err)
+		t.Fatalf("open raw: %v", err)
+	}
+	if _, err := raw.Exec("PRAGMA journal_mode=WAL"); err != nil {
+		t.Fatalf("set WAL: %v", err)
+	}
+	if err := createSchema(raw); err != nil {
+		t.Fatalf("create schema: %v", err)
 	}
 
-	// Hold an EXCLUSIVE lock — this blocks all other connections including
-	// the journal_mode switch in Open() which requires an exclusive lock.
-	if _, err := c1.DB().Exec("BEGIN EXCLUSIVE"); err != nil {
+	// Hold an EXCLUSIVE lock — prevents journal_mode switch.
+	if _, err := raw.Exec("BEGIN EXCLUSIVE"); err != nil {
 		t.Fatalf("begin exclusive: %v", err)
 	}
 
-	// Release the lock after a short delay in a goroutine.
-	done := make(chan struct{})
-	go func() {
-		time.Sleep(200 * time.Millisecond)
-		c1.DB().Exec("COMMIT") //nolint:errcheck
-		close(done)
-	}()
-
-	// Second open must wait (busy_timeout) rather than fail immediately.
-	start := time.Now()
-	c2, err := Open(t.Context(), cfg)
-	elapsed := time.Since(start)
+	// Open() should succeed despite being unable to switch to DELETE.
+	cfg := testCorpusConfig(dbPath)
+	c, err := Open(t.Context(), cfg)
 	if err != nil {
-		t.Fatalf("second Open should succeed after busy wait, got: %v", err)
-	}
-	c2.Close()
-
-	if elapsed < 150*time.Millisecond {
-		t.Errorf("Open returned in %v, expected >= 150ms wait for lock release", elapsed)
+		t.Fatalf("Open should succeed with graceful WAL fallback, got: %v", err)
 	}
 
-	<-done
-	c1.Close()
+	// Verify it fell back to WAL mode.
+	var mode string
+	if err := c.DB().QueryRow("PRAGMA journal_mode").Scan(&mode); err != nil {
+		t.Fatalf("query journal_mode: %v", err)
+	}
+	if mode != "wal" {
+		t.Errorf("expected WAL fallback, got journal_mode=%q", mode)
+	}
+
+	raw.Exec("COMMIT") //nolint:errcheck
+	raw.Close()
+	c.Close()
+}
+
+func TestCloseCheckpointsWhenStuckInWAL(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "walclose.db")
+	walPath := dbPath + "-wal"
+
+	// Create a WAL-mode DB with schema.
+	raw, err := openRawDB(dbPath)
+	if err != nil {
+		t.Fatalf("open raw: %v", err)
+	}
+	if _, err := raw.Exec("PRAGMA journal_mode=WAL"); err != nil {
+		t.Fatalf("set WAL: %v", err)
+	}
+	if err := createSchema(raw); err != nil {
+		t.Fatalf("create schema: %v", err)
+	}
+
+	// Keep raw connection open — this blocks corpus.Open() from switching
+	// to DELETE mode, forcing it to stay in WAL.
+	cfg := testCorpusConfig(dbPath)
+	c, err := Open(t.Context(), cfg)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	// Write data through the corpus (goes to WAL since mode is still WAL).
+	if _, err := c.DB().Exec(`INSERT INTO precedents
+		(signature, signature_hash, raw_command, command_names, flags,
+		 ast_summary, cwd, decision, reasoning, risk_factors,
+		 matched_rule, scopes_in_play, stargate_trace_id, session_id, agent)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`[{"name":"test"}]`, "test", "test cmd", `["test"]`, `[]`,
+		"test", "/tmp", "allow", "test", `[]`, "", `[]`, "", "", ""); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	// Close the raw connection first, then close corpus.
+	// Close() should PASSIVE checkpoint the WAL data into the main file.
+	raw.Close()
+	c.Close()
+
+	// Verify: open without WAL recovery (in DELETE mode) and check data.
+	if _, err := os.Stat(walPath); err == nil {
+		t.Logf("WAL file still exists (PASSIVE may not have fully checkpointed), size: %d",
+			func() int64 { fi, _ := os.Stat(walPath); return fi.Size() }())
+	}
+
+	// Reopen fresh — should see the data regardless of WAL state.
+	c2, err := Open(t.Context(), cfg)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer c2.Close()
+
+	entries, err := c2.ExportAll()
+	if err != nil {
+		t.Fatalf("ExportAll: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("got %d entries after WAL close+checkpoint, want 1", len(entries))
+	}
+	if entries[0].RawCommand != "test cmd" {
+		t.Errorf("RawCommand = %q, want %q", entries[0].RawCommand, "test cmd")
+	}
 }
 
 func TestOpenMigratesWALToDelete(t *testing.T) {

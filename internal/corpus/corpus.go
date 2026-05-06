@@ -81,12 +81,10 @@ func Open(ctx context.Context, cfg config.CorpusConfig) (*Corpus, error) {
 	}
 	if mode != "delete" {
 		if err := db.QueryRow("PRAGMA journal_mode=DELETE").Scan(&mode); err != nil {
-			db.Close()
-			return nil, fmt.Errorf("corpus: set journal_mode: %w", err)
-		}
-		if mode != "delete" {
-			// Another process holds the DB in WAL mode — continue gracefully.
-			// The switch will succeed on next open after the WAL connection closes.
+			// SQLITE_BUSY: another connection holds the DB open — can't switch.
+			// Continue in current mode; Close() will checkpoint if needed.
+			fmt.Fprintf(os.Stderr, "corpus: journal_mode switch blocked (will retry on next open): %v\n", err)
+		} else if mode != "delete" {
 			fmt.Fprintf(os.Stderr, "corpus: journal_mode is %q (another WAL connection active); will retry on next open\n", mode)
 		}
 	}
