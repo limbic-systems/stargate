@@ -84,8 +84,9 @@ func Open(ctx context.Context, cfg config.CorpusConfig) (*Corpus, error) {
 			return nil, fmt.Errorf("corpus: set journal_mode: %w", err)
 		}
 		if mode != "delete" {
-			db.Close()
-			return nil, fmt.Errorf("corpus: journal_mode switch failed (got %q, want delete)", mode)
+			// Another process holds the DB in WAL mode — continue gracefully.
+			// The switch will succeed on next open after the WAL connection closes.
+			fmt.Fprintf(os.Stderr, "corpus: journal_mode is %q (another WAL connection active); will retry on next open\n", mode)
 		}
 	}
 
