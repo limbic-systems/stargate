@@ -171,6 +171,12 @@ func TestCloseCheckpointsWhenStuckInWAL(t *testing.T) {
 		t.Fatalf("Open: %v", err)
 	}
 
+	// Record main DB size before write (schema only).
+	preInfo, err := os.Stat(dbPath)
+	if err != nil {
+		t.Fatalf("stat before write: %v", err)
+	}
+
 	// Write data through the corpus (goes to WAL since mode is still WAL).
 	if _, err := c.DB().Exec(`INSERT INTO precedents
 		(signature, signature_hash, raw_command, command_names, flags,
@@ -183,8 +189,19 @@ func TestCloseCheckpointsWhenStuckInWAL(t *testing.T) {
 	}
 
 	// Close corpus WHILE raw is still open — our PASSIVE checkpoint must
-	// flush data rather than relying on SQLite's last-connection cleanup.
+	// flush data into the main file (not rely on last-connection cleanup).
 	c.Close()
+
+	// Verify: main DB grew after Close() — proves PASSIVE checkpoint moved
+	// data from WAL into the main file while raw was still open.
+	postInfo, err := os.Stat(dbPath)
+	if err != nil {
+		t.Fatalf("stat after close: %v", err)
+	}
+	if postInfo.Size() <= preInfo.Size() {
+		t.Errorf("main DB did not grow after Close() checkpoint: before=%d after=%d",
+			preInfo.Size(), postInfo.Size())
+	}
 
 	// Now close raw and reopen fresh to verify data survived.
 	raw.Close()
