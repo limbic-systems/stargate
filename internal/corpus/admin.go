@@ -133,7 +133,7 @@ func (c *Corpus) ExportAll() ([]PrecedentEntry, error) {
 	}
 	defer rows.Close()
 
-	var entries []PrecedentEntry
+	entries := make([]PrecedentEntry, 0)
 	for rows.Next() {
 		e, err := scanEntry(rows)
 		if err != nil {

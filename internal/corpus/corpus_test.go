@@ -2,6 +2,7 @@ package corpus
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
@@ -15,6 +16,15 @@ import (
 
 func boolPtr(b bool) *bool { return &b }
 func intPtr(i int) *int    { return &i }
+
+func openRawDB(path string) (*sql.DB, error) {
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(1)
+	return db, nil
+}
 
 func testCorpusConfig(path string) config.CorpusConfig {
 	return config.CorpusConfig{
@@ -62,7 +72,7 @@ func TestOpenCreatesDBAndTables(t *testing.T) {
 	}
 }
 
-func TestOpenWALMode(t *testing.T) {
+func TestOpenPragmas(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.db")
 	cfg := testCorpusConfig(dbPath)
@@ -73,13 +83,246 @@ func TestOpenWALMode(t *testing.T) {
 	}
 	defer c.Close()
 
-	var mode string
-	err = c.DB().QueryRow("PRAGMA journal_mode").Scan(&mode)
+	tests := []struct {
+		pragma string
+		want   string
+	}{
+		{"journal_mode", "delete"},
+		{"synchronous", "1"},    // NORMAL = 1
+		{"temp_store", "2"},     // MEMORY = 2
+		{"cache_size", "-256"},  // 256KB
+		{"page_size", "4096"},
+	}
+	for _, tt := range tests {
+		var got string
+		err := c.DB().QueryRow("PRAGMA " + tt.pragma).Scan(&got)
+		if err != nil {
+			t.Fatalf("PRAGMA %s: %v", tt.pragma, err)
+		}
+		if got != tt.want {
+			t.Errorf("PRAGMA %s = %q, want %q", tt.pragma, got, tt.want)
+		}
+	}
+}
+
+func TestOpenGracefulFallbackWhenLocked(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "locked.db")
+
+	// Create a WAL-mode DB with another connection holding it open.
+	raw, err := openRawDB(dbPath)
 	if err != nil {
+		t.Fatalf("open raw: %v", err)
+	}
+	if _, err := raw.Exec("PRAGMA journal_mode=WAL"); err != nil {
+		t.Fatalf("set WAL: %v", err)
+	}
+	if err := createSchema(raw); err != nil {
+		t.Fatalf("create schema: %v", err)
+	}
+
+	// Hold an EXCLUSIVE lock — prevents journal_mode switch.
+	if _, err := raw.Exec("BEGIN EXCLUSIVE"); err != nil {
+		t.Fatalf("begin exclusive: %v", err)
+	}
+
+	// Open() should succeed despite being unable to switch to DELETE.
+	cfg := testCorpusConfig(dbPath)
+	c, err := Open(t.Context(), cfg)
+	if err != nil {
+		t.Fatalf("Open should succeed with graceful WAL fallback, got: %v", err)
+	}
+
+	// Verify it fell back to WAL mode.
+	var mode string
+	if err := c.DB().QueryRow("PRAGMA journal_mode").Scan(&mode); err != nil {
 		t.Fatalf("query journal_mode: %v", err)
 	}
 	if mode != "wal" {
-		t.Errorf("journal_mode = %q, want wal", mode)
+		t.Errorf("expected WAL fallback, got journal_mode=%q", mode)
+	}
+
+	raw.Exec("COMMIT") //nolint:errcheck
+	raw.Close()
+	c.Close()
+}
+
+func TestCloseCheckpointsWhenStuckInWAL(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "walclose.db")
+
+	// Create a WAL-mode DB with schema.
+	raw, err := openRawDB(dbPath)
+	if err != nil {
+		t.Fatalf("open raw: %v", err)
+	}
+	if _, err := raw.Exec("PRAGMA journal_mode=WAL"); err != nil {
+		t.Fatalf("set WAL: %v", err)
+	}
+	if err := createSchema(raw); err != nil {
+		t.Fatalf("create schema: %v", err)
+	}
+
+	// Keep raw connection open — this blocks corpus.Open() from switching
+	// to DELETE mode, forcing it to stay in WAL.
+	cfg := testCorpusConfig(dbPath)
+	c, err := Open(t.Context(), cfg)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	// Record main DB size before write (schema only).
+	preInfo, err := os.Stat(dbPath)
+	if err != nil {
+		t.Fatalf("stat before write: %v", err)
+	}
+
+	// Write data through the corpus (goes to WAL since mode is still WAL).
+	if _, err := c.DB().Exec(`INSERT INTO precedents
+		(signature, signature_hash, raw_command, command_names, flags,
+		 ast_summary, cwd, decision, reasoning, risk_factors,
+		 matched_rule, scopes_in_play, stargate_trace_id, session_id, agent)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`[{"name":"test"}]`, "test", "test cmd", `["test"]`, `[]`,
+		"test", "/tmp", "allow", "test", `[]`, "", `[]`, "", "", ""); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	// Close corpus WHILE raw is still open — our PASSIVE checkpoint must
+	// flush data into the main file (not rely on last-connection cleanup).
+	c.Close()
+
+	// Verify: main DB grew after Close() — proves PASSIVE checkpoint moved
+	// data from WAL into the main file while raw was still open.
+	postInfo, err := os.Stat(dbPath)
+	if err != nil {
+		t.Fatalf("stat after close: %v", err)
+	}
+	if postInfo.Size() <= preInfo.Size() {
+		t.Errorf("main DB did not grow after Close() checkpoint: before=%d after=%d",
+			preInfo.Size(), postInfo.Size())
+	}
+
+	// Now close raw and reopen fresh to verify data survived.
+	raw.Close()
+
+	c2, err := Open(t.Context(), cfg)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer c2.Close()
+
+	entries, err := c2.ExportAll()
+	if err != nil {
+		t.Fatalf("ExportAll: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("got %d entries after WAL close+checkpoint, want 1", len(entries))
+	}
+	if entries[0].RawCommand != "test cmd" {
+		t.Errorf("RawCommand = %q, want %q", entries[0].RawCommand, "test cmd")
+	}
+}
+
+func TestOpenMigratesWALToDelete(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "migrate.db")
+	walPath := dbPath + "-wal"
+
+	// Create a WAL-mode database with autocheckpoint disabled so data
+	// stays in the WAL file and is NOT checkpointed into the main DB.
+	db, err := openRawDB(dbPath)
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
+		t.Fatalf("set WAL: %v", err)
+	}
+	if _, err := db.Exec("PRAGMA wal_autocheckpoint=0"); err != nil {
+		t.Fatalf("disable autocheckpoint: %v", err)
+	}
+	if err := createSchema(db); err != nil {
+		t.Fatalf("create schema: %v", err)
+	}
+
+	// Record schema-only state of the main DB file.
+	schemaSnapshot, err := os.ReadFile(dbPath)
+	if err != nil {
+		t.Fatalf("read schema snapshot: %v", err)
+	}
+
+	if _, err := db.Exec(`INSERT INTO precedents
+		(signature, signature_hash, raw_command, command_names, flags,
+		 ast_summary, cwd, decision, reasoning, risk_factors,
+		 matched_rule, scopes_in_play, stargate_trace_id, session_id, agent)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`[{"name":"git","subcommand":"status","flags":[],"context":"top_level"}]`,
+		"abc123", "git status", `["git"]`, `[]`, "git status", "/tmp",
+		"allow", "read-only git", `[]`, "", `[]`, "", "", ""); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	// Capture the WAL (which holds the INSERT since autocheckpoint is off).
+	walSnapshot, err := os.ReadFile(walPath)
+	if err != nil {
+		t.Fatalf("read WAL: %v", err)
+	}
+	if len(walSnapshot) == 0 {
+		t.Fatal("WAL should contain data before close")
+	}
+
+	// Close checkpoints the WAL into the main file and removes it.
+	db.Close()
+
+	// Restore stranded-WAL state: schema-only main file + WAL with data.
+	// This simulates the crash/disk-full scenario where WAL was never
+	// checkpointed into the main DB.
+	if err := os.WriteFile(dbPath, schemaSnapshot, 0600); err != nil {
+		t.Fatalf("restore schema snapshot: %v", err)
+	}
+	if err := os.WriteFile(walPath, walSnapshot, 0600); err != nil {
+		t.Fatalf("restore WAL: %v", err)
+	}
+
+	// Reopen via Open() which must recover the WAL then switch to DELETE.
+	cfg := testCorpusConfig(dbPath)
+	c, err := Open(t.Context(), cfg)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer c.Close()
+
+	// Verify journal mode migrated.
+	var mode string
+	if err := c.DB().QueryRow("PRAGMA journal_mode").Scan(&mode); err != nil {
+		t.Fatalf("query journal_mode: %v", err)
+	}
+	if mode != "delete" {
+		t.Errorf("journal_mode = %q after migration, want delete", mode)
+	}
+
+	// Verify data from the stranded WAL was recovered (including JSON fields).
+	entries, err := c.ExportAll()
+	if err != nil {
+		t.Fatalf("ExportAll: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("got %d entries after stranded WAL recovery, want 1", len(entries))
+	}
+	e := entries[0]
+	if e.RawCommand != "git status" {
+		t.Errorf("RawCommand = %q, want %q", e.RawCommand, "git status")
+	}
+	if len(e.CommandNames) != 1 || e.CommandNames[0] != "git" {
+		t.Errorf("CommandNames = %v, want [git]", e.CommandNames)
+	}
+	if e.Decision != "allow" {
+		t.Errorf("Decision = %q, want allow", e.Decision)
+	}
+
+	// WAL file should be gone after migration to DELETE mode.
+	if _, err := os.Stat(walPath); !os.IsNotExist(err) {
+		t.Errorf("WAL file should not exist after DELETE migration, got err=%v", err)
 	}
 }
 

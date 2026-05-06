@@ -5,6 +5,7 @@ package corpus
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,13 +15,14 @@ import (
 	"github.com/limbic-systems/stargate/internal/config"
 	"github.com/limbic-systems/stargate/internal/ttlmap"
 
-	_ "modernc.org/sqlite" // SQLite driver
+	sqlite "modernc.org/sqlite"
 )
 
 // Corpus is an SQLite-backed store of past classification judgments.
 type Corpus struct {
 	db              *sql.DB
 	cfg             config.CorpusConfig
+	journalMode     string // "delete" or "wal" (set at open time)
 	cancel          context.CancelFunc
 	wg              sync.WaitGroup
 	sigRateLimit    *ttlmap.TTLMap[string, struct{}]
@@ -59,19 +61,54 @@ func Open(ctx context.Context, cfg config.CorpusConfig) (*Corpus, error) {
 		return nil, fmt.Errorf("corpus: open %q: %w", dbPath, err)
 	}
 
-	// Single connection serializes all operations. WAL mode is still enabled
-	// for crash recovery and to avoid journal locking, but concurrent read/write
-	// is not leveraged (acceptable for localhost single-user load profile).
+	// One connection per Corpus instance. Cross-process concurrency (server +
+	// CLI) is handled by busy_timeout below, not by connection pooling.
 	db.SetMaxOpenConns(1)
 
-	// Enable WAL mode and set busy timeout.
-	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("corpus: enable WAL mode: %w", err)
-	}
+	// busy_timeout protects all lock-acquiring operations (writes, schema
+	// creation) from failing immediately under cross-process contention.
 	if _, err := db.Exec("PRAGMA busy_timeout=5000"); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("corpus: set busy_timeout: %w", err)
+	}
+
+	// Only switch journal mode if not already DELETE — avoids taking an
+	// exclusive lock on every Open() when the DB was already migrated.
+	var mode string
+	if err := db.QueryRow("PRAGMA journal_mode").Scan(&mode); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("corpus: query journal_mode: %w", err)
+	}
+	if mode != "delete" {
+		if err := db.QueryRow("PRAGMA journal_mode=DELETE").Scan(&mode); err != nil {
+			if isSQLiteBusy(err) {
+				fmt.Fprintf(os.Stderr, "corpus: journal_mode switch blocked (will retry on next open): %v\n", err)
+			} else {
+				db.Close()
+				return nil, fmt.Errorf("corpus: set journal_mode: %w", err)
+			}
+		} else if mode != "delete" {
+			fmt.Fprintf(os.Stderr, "corpus: journal_mode is %q (another WAL connection active); will retry on next open\n", mode)
+		}
+	}
+
+	pragmas := []string{
+		// Corpus is a cache of past judgments — losing one entry on OS crash
+		// is acceptable. NORMAL avoids redundant fsync on every commit.
+		"PRAGMA synchronous=NORMAL",
+		// 4KB pages (default) are fine for small row counts.
+		"PRAGMA page_size=4096",
+		// 64 pages = 256KB in-memory page cache.
+		"PRAGMA cache_size=-256",
+		// Temp tables/indices in memory — avoids temp file creation which
+		// could fail under disk pressure.
+		"PRAGMA temp_store=MEMORY",
+	}
+	for _, p := range pragmas {
+		if _, err := db.Exec(p); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("corpus: %s: %w", p, err)
+		}
 	}
 
 	// Create schema.
@@ -89,9 +126,10 @@ func Open(ctx context.Context, cfg config.CorpusConfig) (*Corpus, error) {
 
 	ctx, cancel := context.WithCancel(ctx)
 	c := &Corpus{
-		db:     db,
-		cfg:    cfg,
-		cancel: cancel,
+		db:          db,
+		cfg:         cfg,
+		journalMode: mode,
+		cancel:      cancel,
 	}
 
 	// Initialize rate limiters.
@@ -104,21 +142,29 @@ func Open(ctx context.Context, cfg config.CorpusConfig) (*Corpus, error) {
 	return c, nil
 }
 
-// Close shuts down the corpus in strict order:
-// 1. Cancel context (signals goroutines to stop)
-// 2. Wait for goroutines to exit
-// 3. WAL checkpoint
-// 4. Close database
+// Close shuts down the corpus: cancels background goroutines, waits for
+// them to exit, checkpoints WAL if still in WAL mode, then closes the database.
 func (c *Corpus) Close() error {
 	c.cancel()
 	c.wg.Wait()
 
-	if _, err := c.db.Exec("PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
-		// Log but don't fail — next Open recovers WAL automatically.
-		fmt.Fprintf(os.Stderr, "corpus: WAL checkpoint warning: %v\n", err)
+	if c.journalMode != "delete" {
+		if _, err := c.db.Exec("PRAGMA wal_checkpoint(PASSIVE)"); err != nil {
+			fmt.Fprintf(os.Stderr, "corpus: WAL checkpoint warning: %v\n", err)
+		}
 	}
 
 	return c.db.Close()
+}
+
+// isSQLiteBusy returns true if the error is SQLITE_BUSY or SQLITE_LOCKED.
+func isSQLiteBusy(err error) bool {
+	var sqlErr *sqlite.Error
+	if errors.As(err, &sqlErr) {
+		code := sqlErr.Code()
+		return code == 5 || code == 6 // SQLITE_BUSY, SQLITE_LOCKED
+	}
+	return false
 }
 
 // DB returns the underlying database connection for use by write/lookup operations.
