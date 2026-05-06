@@ -64,9 +64,8 @@ func Open(ctx context.Context, cfg config.CorpusConfig) (*Corpus, error) {
 	// CLI) is handled by busy_timeout below, not by connection pooling.
 	db.SetMaxOpenConns(1)
 
-	// busy_timeout first: the journal_mode switch below may need to acquire
-	// an exclusive lock (e.g., checkpointing an existing WAL), so the
-	// timeout must be in effect before that runs.
+	// busy_timeout protects all lock-acquiring operations (writes, schema
+	// creation) from failing immediately under cross-process contention.
 	if _, err := db.Exec("PRAGMA busy_timeout=5000"); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("corpus: set busy_timeout: %w", err)

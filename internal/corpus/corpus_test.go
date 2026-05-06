@@ -150,7 +150,6 @@ func TestOpenGracefulFallbackWhenLocked(t *testing.T) {
 func TestCloseCheckpointsWhenStuckInWAL(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "walclose.db")
-	walPath := dbPath + "-wal"
 
 	// Create a WAL-mode DB with schema.
 	raw, err := openRawDB(dbPath)
@@ -183,18 +182,13 @@ func TestCloseCheckpointsWhenStuckInWAL(t *testing.T) {
 		t.Fatalf("insert: %v", err)
 	}
 
-	// Close the raw connection first, then close corpus.
-	// Close() should PASSIVE checkpoint the WAL data into the main file.
-	raw.Close()
+	// Close corpus WHILE raw is still open — our PASSIVE checkpoint must
+	// flush data rather than relying on SQLite's last-connection cleanup.
 	c.Close()
 
-	// Verify: open without WAL recovery (in DELETE mode) and check data.
-	if _, err := os.Stat(walPath); err == nil {
-		t.Logf("WAL file still exists (PASSIVE may not have fully checkpointed), size: %d",
-			func() int64 { fi, _ := os.Stat(walPath); return fi.Size() }())
-	}
+	// Now close raw and reopen fresh to verify data survived.
+	raw.Close()
 
-	// Reopen fresh — should see the data regardless of WAL state.
 	c2, err := Open(t.Context(), cfg)
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
