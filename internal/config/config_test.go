@@ -351,3 +351,86 @@ max_response_reasoning_length = 0
 		t.Errorf("LLM.MaxResponseReasoningLength = %d, want 0 (explicit omit)", *cfg.LLM.MaxResponseReasoningLength)
 	}
 }
+
+func TestLatitudeDefaults(t *testing.T) {
+	path := writeConfig(t, `
+[server]
+listen = "127.0.0.1:9099"
+`)
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Latitude.CaptureName != "stargate-classify" {
+		t.Errorf("capture_name = %q, want %q", cfg.Latitude.CaptureName, "stargate-classify")
+	}
+	if cfg.Latitude.Endpoint != "https://ingest.latitude.so/v1/traces" {
+		t.Errorf("endpoint = %q, want default", cfg.Latitude.Endpoint)
+	}
+	if cfg.Latitude.Enabled {
+		t.Error("latitude should be disabled by default")
+	}
+	if cfg.Latitude.ProjectSlug != "stargate" {
+		t.Errorf("project_slug = %q, want %q", cfg.Latitude.ProjectSlug, "stargate")
+	}
+}
+
+func TestLatitudeValidation_InvalidEndpoint(t *testing.T) {
+	path := writeConfig(t, `
+[server]
+listen = "127.0.0.1:9099"
+
+[latitude]
+enabled = true
+project_slug = "my-project"
+endpoint = "ftp://bad-scheme"
+`)
+	_, err := config.Load(path)
+	if err == nil {
+		t.Fatal("expected validation error for invalid endpoint")
+	}
+	if !strings.Contains(err.Error(), "endpoint") {
+		t.Errorf("error should mention endpoint: %v", err)
+	}
+}
+
+func TestLatitudeValidation_ValidConfig(t *testing.T) {
+	path := writeConfig(t, `
+[server]
+listen = "127.0.0.1:9099"
+
+[latitude]
+enabled = true
+project_slug = "my-project"
+tags = ["production", "v2"]
+`)
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !cfg.Latitude.Enabled {
+		t.Error("latitude should be enabled")
+	}
+	if cfg.Latitude.ProjectSlug != "my-project" {
+		t.Errorf("project_slug = %q, want %q", cfg.Latitude.ProjectSlug, "my-project")
+	}
+	if len(cfg.Latitude.Tags) != 2 || cfg.Latitude.Tags[0] != "production" {
+		t.Errorf("tags = %v, want [production v2]", cfg.Latitude.Tags)
+	}
+}
+
+func TestLatitudeValidation_DisabledSkipsValidation(t *testing.T) {
+	path := writeConfig(t, `
+[server]
+listen = "127.0.0.1:9099"
+
+[latitude]
+enabled = false
+project_slug = ""
+endpoint = ""
+`)
+	_, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("disabled latitude should not validate other fields: %v", err)
+	}
+}

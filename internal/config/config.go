@@ -85,20 +85,21 @@ func validateRulePattern(pattern string) error {
 
 // Config is the top-level configuration structure for stargate.
 type Config struct {
-	Version    string                    `toml:"-"` // set at startup, not from TOML
-	ServerCWD  string                    `toml:"-"` // resolved server working directory, set at startup
-	Server     ServerConfig              `toml:"server"`
-	Parser     ParserConfig              `toml:"parser"`
-	Classifier ClassifierConfig          `toml:"classifier"`
-	Scopes     map[string][]string       `toml:"scopes"`
-	Rules      RulesConfig               `toml:"rules"`
-	Wrappers   []WrapperConfig           `toml:"wrappers"`
-	Commands   []CommandFlagsConfig      `toml:"commands"`
-	LLM        LLMConfig                 `toml:"llm"`
-	Scrubbing  ScrubbingConfig           `toml:"scrubbing"`
-	Corpus     CorpusConfig              `toml:"corpus"`
-	Telemetry  TelemetryConfig           `toml:"telemetry"`
-	Log        LogConfig                 `toml:"log"`
+	Version    string               `toml:"-"` // set at startup, not from TOML
+	ServerCWD  string               `toml:"-"` // resolved server working directory, set at startup
+	Server     ServerConfig         `toml:"server"`
+	Parser     ParserConfig         `toml:"parser"`
+	Classifier ClassifierConfig     `toml:"classifier"`
+	Scopes     map[string][]string  `toml:"scopes"`
+	Rules      RulesConfig          `toml:"rules"`
+	Wrappers   []WrapperConfig      `toml:"wrappers"`
+	Commands   []CommandFlagsConfig `toml:"commands"`
+	LLM        LLMConfig            `toml:"llm"`
+	Scrubbing  ScrubbingConfig      `toml:"scrubbing"`
+	Corpus     CorpusConfig         `toml:"corpus"`
+	Telemetry  TelemetryConfig      `toml:"telemetry"`
+	Log        LogConfig            `toml:"log"`
+	Latitude   LatitudeConfig       `toml:"latitude"`
 }
 
 // WrapperConfig defines a prefix command that wraps another command.
@@ -157,18 +158,18 @@ type RulesConfig struct {
 
 // Rule describes a single classification rule.
 type Rule struct {
-	Command     string         `toml:"command"`
-	Commands    []string       `toml:"commands"`
-	Subcommands []string       `toml:"subcommands"`
+	Command      string         `toml:"command"`
+	Commands     []string       `toml:"commands"`
+	Subcommands  []string       `toml:"subcommands"`
 	Flags        []string       `toml:"flags"`
 	ExcludeFlags []string       `toml:"exclude_flags"`
-	Args        []string       `toml:"args"`
-	Pattern     string         `toml:"pattern"`
-	Scope       string         `toml:"scope"`
-	Context     string         `toml:"context"`
-	Resolve     *ResolveConfig `toml:"resolve"`
-	LLMReview   *bool          `toml:"llm_review"`
-	Reason      string         `toml:"reason"`
+	Args         []string       `toml:"args"`
+	Pattern      string         `toml:"pattern"`
+	Scope        string         `toml:"scope"`
+	Context      string         `toml:"context"`
+	Resolve      *ResolveConfig `toml:"resolve"`
+	LLMReview    *bool          `toml:"llm_review"`
+	Reason       string         `toml:"reason"`
 }
 
 // ResolveConfig specifies a contextual trust resolver.
@@ -201,23 +202,23 @@ type ScrubbingConfig struct {
 
 // CorpusConfig holds precedent corpus settings.
 type CorpusConfig struct {
-	Enabled                *bool   `toml:"enabled"`
-	Path                   string  `toml:"path"`
-	MaxPrecedents          int     `toml:"max_precedents"`  // 0 = use default (5). Not a pointer: 0 is not a useful explicit value (use Enabled=false to disable).
-	MinSimilarity          float64 `toml:"min_similarity"` // 0 = use default (0.7). Not a pointer: 0.0 matches everything, use Enabled=false to disable.
-	MaxAge                 string  `toml:"max_age"`
-	MaxEntries             *int    `toml:"max_entries"`
-	PruneInterval          string  `toml:"prune_interval"`
-	MaxWritesPerMinute     int     `toml:"max_writes_per_minute"`
-	StoreDecisions         string  `toml:"store_decisions"`
-	StoreReasoning         *bool   `toml:"store_reasoning"`
-	MaxReasoningLength     int     `toml:"max_reasoning_length"`
-	StoreRawCommand        *bool   `toml:"store_raw_command"`
-	StoreUserApprovals     *bool   `toml:"store_user_approvals"`
-	MaxPrecedentsPerPolarity int   `toml:"max_precedents_per_polarity"`
-	CommandCacheEnabled    *bool   `toml:"command_cache_enabled"`
-	CommandCacheTTL        string  `toml:"command_cache_ttl"`
-	CommandCacheMaxEntries int     `toml:"command_cache_max_entries"`
+	Enabled                  *bool   `toml:"enabled"`
+	Path                     string  `toml:"path"`
+	MaxPrecedents            int     `toml:"max_precedents"` // 0 = use default (5). Not a pointer: 0 is not a useful explicit value (use Enabled=false to disable).
+	MinSimilarity            float64 `toml:"min_similarity"` // 0 = use default (0.7). Not a pointer: 0.0 matches everything, use Enabled=false to disable.
+	MaxAge                   string  `toml:"max_age"`
+	MaxEntries               *int    `toml:"max_entries"`
+	PruneInterval            string  `toml:"prune_interval"`
+	MaxWritesPerMinute       int     `toml:"max_writes_per_minute"`
+	StoreDecisions           string  `toml:"store_decisions"`
+	StoreReasoning           *bool   `toml:"store_reasoning"`
+	MaxReasoningLength       int     `toml:"max_reasoning_length"`
+	StoreRawCommand          *bool   `toml:"store_raw_command"`
+	StoreUserApprovals       *bool   `toml:"store_user_approvals"`
+	MaxPrecedentsPerPolarity int     `toml:"max_precedents_per_polarity"`
+	CommandCacheEnabled      *bool   `toml:"command_cache_enabled"`
+	CommandCacheTTL          string  `toml:"command_cache_ttl"`
+	CommandCacheMaxEntries   int     `toml:"command_cache_max_entries"`
 }
 
 // corpusEnabled returns whether the corpus is enabled (defaults to true).
@@ -282,16 +283,16 @@ func (r RedactedString) GoString() string { return "[REDACTED]" }
 
 // TelemetryConfig holds OpenTelemetry export settings.
 type TelemetryConfig struct {
-	Enabled              bool           `toml:"enabled"`
-	Endpoint             string         `toml:"endpoint"`
-	Username             string         `toml:"username"`
-	Password             RedactedString `toml:"password"`
-	Protocol             string         `toml:"protocol"`
-	ExportLogs           bool           `toml:"export_logs"`
-	ExportMetrics        bool           `toml:"export_metrics"`
-	ExportTraces         bool           `toml:"export_traces"`
-	ServiceName          string         `toml:"service_name"`
-	IncludeScrubCommand  bool           `toml:"include_scrubbed_command"`
+	Enabled             bool           `toml:"enabled"`
+	Endpoint            string         `toml:"endpoint"`
+	Username            string         `toml:"username"`
+	Password            RedactedString `toml:"password"`
+	Protocol            string         `toml:"protocol"`
+	ExportLogs          bool           `toml:"export_logs"`
+	ExportMetrics       bool           `toml:"export_metrics"`
+	ExportTraces        bool           `toml:"export_traces"`
+	ServiceName         string         `toml:"service_name"`
+	IncludeScrubCommand bool           `toml:"include_scrubbed_command"`
 }
 
 // LogConfig holds local logging settings.
@@ -301,6 +302,15 @@ type LogConfig struct {
 	File        string `toml:"file"`
 	LogCommands bool   `toml:"log_commands"`
 	LogLLM      bool   `toml:"log_llm"`
+}
+
+// LatitudeConfig holds settings for the Latitude LLM evaluation integration.
+type LatitudeConfig struct {
+	Enabled     bool     `toml:"enabled"`
+	ProjectSlug string   `toml:"project_slug"`
+	CaptureName string   `toml:"capture_name"`
+	Endpoint    string   `toml:"endpoint"`
+	Tags        []string `toml:"tags"`
 }
 
 // Load reads the TOML config at path, applies defaults, and validates it.
@@ -433,6 +443,15 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Corpus.CommandCacheMaxEntries == 0 {
 		cfg.Corpus.CommandCacheMaxEntries = 10000
+	}
+	if cfg.Latitude.ProjectSlug == "" {
+		cfg.Latitude.ProjectSlug = "stargate"
+	}
+	if cfg.Latitude.CaptureName == "" {
+		cfg.Latitude.CaptureName = "stargate-classify"
+	}
+	if cfg.Latitude.Endpoint == "" {
+		cfg.Latitude.Endpoint = "https://ingest.latitude.so/v1/traces"
 	}
 }
 
@@ -694,6 +713,20 @@ func (cfg *Config) Validate() error {
 	validTelemetryProtocols := map[string]bool{"": true, "http/protobuf": true}
 	if !validTelemetryProtocols[cfg.Telemetry.Protocol] {
 		return fmt.Errorf("config: telemetry.protocol must be http/protobuf (or empty for default); got %q", cfg.Telemetry.Protocol)
+	}
+
+	// --- Latitude ---
+	if cfg.Latitude.Enabled {
+		if cfg.Latitude.Endpoint == "" {
+			return fmt.Errorf("config: latitude.endpoint is required when latitude is enabled")
+		}
+		epLower := strings.ToLower(cfg.Latitude.Endpoint)
+		if !strings.HasPrefix(epLower, "http://") && !strings.HasPrefix(epLower, "https://") {
+			return fmt.Errorf("config: latitude.endpoint must use http:// or https:// scheme; got %q", cfg.Latitude.Endpoint)
+		}
+		if u, err := url.Parse(cfg.Latitude.Endpoint); err != nil || u.Host == "" {
+			return fmt.Errorf("config: latitude.endpoint must be a valid URL with a host; got %q", cfg.Latitude.Endpoint)
+		}
 	}
 
 	// --- Log ---

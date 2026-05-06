@@ -4,13 +4,14 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/limbic-systems/stargate/internal/config"
 )
 
 func TestInit_DisabledReturnsNoOp(t *testing.T) {
-	tel, err := Init(config.TelemetryConfig{Enabled: false})
+	tel, err := Init(config.TelemetryConfig{Enabled: false}, config.LatitudeConfig{})
 	if err != nil {
 		t.Fatalf("Init: %v", err)
 	}
@@ -27,7 +28,7 @@ func TestInit_EnabledReturnsLive(t *testing.T) {
 		ExportMetrics: true,
 		ExportLogs:    true,
 	}
-	tel, err := Init(cfg)
+	tel, err := Init(cfg, config.LatitudeConfig{})
 	if err != nil {
 		t.Fatalf("Init: %v", err)
 	}
@@ -129,7 +130,7 @@ func TestShutdown_LiveTelemetry(t *testing.T) {
 		ExportMetrics: true,
 		ExportLogs:    true,
 	}
-	tel, err := Init(cfg)
+	tel, err := Init(cfg, config.LatitudeConfig{})
 	if err != nil {
 		t.Fatalf("Init: %v", err)
 	}
@@ -149,7 +150,7 @@ func TestHTTPWithCredentialsWarning(t *testing.T) {
 		Password:     config.RedactedString("pass"),
 		ExportTraces: true,
 	}
-	tel, err := Init(cfg)
+	tel, err := Init(cfg, config.LatitudeConfig{})
 	if err != nil {
 		t.Fatalf("Init with http+creds: %v", err)
 	}
@@ -162,7 +163,7 @@ func TestToolUseTraceMap(t *testing.T) {
 		Endpoint:     "https://localhost:4318",
 		ExportTraces: true,
 	}
-	tel, err := Init(cfg)
+	tel, err := Init(cfg, config.LatitudeConfig{})
 	if err != nil {
 		t.Fatalf("Init: %v", err)
 	}
@@ -200,6 +201,65 @@ func searchSubstring(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+func TestInit_LatitudeOnlyReturnsLive(t *testing.T) {
+	t.Setenv("LATITUDE_API_KEY", "test-key")
+
+	tel, err := Init(
+		config.TelemetryConfig{Enabled: false},
+		config.LatitudeConfig{
+			Enabled:     true,
+			ProjectSlug: "test-project",
+			Endpoint:    "https://localhost:4318/v1/traces",
+			CaptureName: "stargate-classify",
+		},
+	)
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	defer tel.Shutdown(context.Background())
+
+	lt, ok := tel.(*LiveTelemetry)
+	if !ok {
+		t.Fatalf("expected *LiveTelemetry, got %T", tel)
+	}
+	if lt.tracerProvider == nil {
+		t.Error("tracerProvider should be non-nil for Latitude-only mode")
+	}
+}
+
+func TestInit_LatitudeEnabledMissingAPIKey(t *testing.T) {
+	t.Setenv("LATITUDE_API_KEY", "")
+
+	_, err := Init(
+		config.TelemetryConfig{Enabled: false},
+		config.LatitudeConfig{
+			Enabled:     true,
+			ProjectSlug: "test-project",
+			Endpoint:    "https://localhost:4318/v1/traces",
+			CaptureName: "stargate-classify",
+		},
+	)
+	if err == nil {
+		t.Fatal("expected error for missing LATITUDE_API_KEY")
+	}
+	if !strings.Contains(err.Error(), "LATITUDE_API_KEY") {
+		t.Errorf("error should mention LATITUDE_API_KEY: %v", err)
+	}
+}
+
+func TestInit_BothDisabledReturnsNoOp(t *testing.T) {
+	tel, err := Init(
+		config.TelemetryConfig{Enabled: false},
+		config.LatitudeConfig{Enabled: false},
+	)
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if _, ok := tel.(*NoOpTelemetry); !ok {
+		t.Errorf("expected *NoOpTelemetry, got %T", tel)
+	}
 }
 
 func TestMain(m *testing.M) {

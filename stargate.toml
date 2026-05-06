@@ -769,6 +769,24 @@ export_traces = true
 service_name = "stargate"
 
 # ---------------------------------------------------------------------------
+# Latitude — LLM evaluation via OTLP trace export
+# ---------------------------------------------------------------------------
+# Enables trace export to Latitude (https://latitude.so) for LLM evaluation.
+# When enabled, ALL spans (classification, feedback, HTTP) are
+# sent to the configured endpoint. This means classification decisions, timing
+# data, session IDs, and trace IDs leave your infrastructure. Only enable this
+# if your organization's data policies permit sending telemetry to a third-party
+# SaaS. See Latitude's privacy policy for data retention details.
+
+# [latitude]
+# enabled = false
+# project_slug = "stargate"
+# capture_name = "stargate-classify"
+# endpoint = "https://ingest.latitude.so/v1/traces"
+# tags = []
+# Authentication: set LATITUDE_API_KEY env var (required when enabled)
+
+# ---------------------------------------------------------------------------
 # Local Logging (always active, independent of telemetry export)
 # ---------------------------------------------------------------------------
 

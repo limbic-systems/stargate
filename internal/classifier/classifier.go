@@ -37,7 +37,7 @@ type Classifier struct {
 	maxCmdLen       int
 	maxASTDepth     int
 	unresolvable    string
-	version         string // from config, included in every response
+	version         string               // from config, included in every response
 	llmProvider     llm.ReviewerProvider // nil = LLM review disabled
 	llmProviderType string               // "anthropic_sdk", "oauth_subprocess", or ""
 	scrubber        *scrub.Scrubber
@@ -346,6 +346,12 @@ func (c *Classifier) Classify(ctx context.Context, req ClassifyRequest) *Classif
 	// filter test traffic from real classifications in Grafana dashboards.
 	if req.DryRun {
 		span.SetAttributes(attribute.Bool("stargate.dry_run", true))
+	}
+
+	if req.Context != nil {
+		if sid, ok := req.Context["session_id"].(string); ok && sid != "" {
+			span.SetAttributes(attribute.String("session.id", sid))
+		}
 	}
 
 	traceID := c.tel.TraceIDFromContext(ctx)
@@ -1022,7 +1028,6 @@ func contextLabel(ctx rules.CommandContext) string {
 		return "top_level"
 	}
 }
-
 
 // HandleFeedback is the HTTP handler for POST /feedback. If the feedback
 // handler was not initialized (e.g., classifier created without HMAC secret),
