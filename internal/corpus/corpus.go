@@ -21,6 +21,7 @@ import (
 type Corpus struct {
 	db              *sql.DB
 	cfg             config.CorpusConfig
+	journalMode     string // "delete" or "wal" (set at open time)
 	cancel          context.CancelFunc
 	wg              sync.WaitGroup
 	sigRateLimit    *ttlmap.TTLMap[string, struct{}]
@@ -124,9 +125,10 @@ func Open(ctx context.Context, cfg config.CorpusConfig) (*Corpus, error) {
 
 	ctx, cancel := context.WithCancel(ctx)
 	c := &Corpus{
-		db:     db,
-		cfg:    cfg,
-		cancel: cancel,
+		db:          db,
+		cfg:         cfg,
+		journalMode: mode,
+		cancel:      cancel,
 	}
 
 	// Initialize rate limiters.
@@ -140,11 +142,17 @@ func Open(ctx context.Context, cfg config.CorpusConfig) (*Corpus, error) {
 }
 
 // Close shuts down the corpus: cancels background goroutines, waits for
-// them to exit, then closes the database. No WAL checkpoint is needed
-// because Open() guarantees DELETE journal mode.
+// them to exit, checkpoints WAL if still in WAL mode, then closes the database.
 func (c *Corpus) Close() error {
 	c.cancel()
 	c.wg.Wait()
+
+	if c.journalMode != "delete" {
+		if _, err := c.db.Exec("PRAGMA wal_checkpoint(PASSIVE)"); err != nil {
+			fmt.Fprintf(os.Stderr, "corpus: WAL checkpoint warning: %v\n", err)
+		}
+	}
+
 	return c.db.Close()
 }
 
