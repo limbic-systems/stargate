@@ -5,6 +5,7 @@ package corpus
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,7 +15,7 @@ import (
 	"github.com/limbic-systems/stargate/internal/config"
 	"github.com/limbic-systems/stargate/internal/ttlmap"
 
-	_ "modernc.org/sqlite" // SQLite driver
+	sqlite "modernc.org/sqlite"
 )
 
 // Corpus is an SQLite-backed store of past classification judgments.
@@ -80,9 +81,12 @@ func Open(ctx context.Context, cfg config.CorpusConfig) (*Corpus, error) {
 	}
 	if mode != "delete" {
 		if err := db.QueryRow("PRAGMA journal_mode=DELETE").Scan(&mode); err != nil {
-			// SQLITE_BUSY: another connection holds the DB open — can't switch.
-			// Continue in current mode; Close() will checkpoint if needed.
-			fmt.Fprintf(os.Stderr, "corpus: journal_mode switch blocked (will retry on next open): %v\n", err)
+			if isSQLiteBusy(err) {
+				fmt.Fprintf(os.Stderr, "corpus: journal_mode switch blocked (will retry on next open): %v\n", err)
+			} else {
+				db.Close()
+				return nil, fmt.Errorf("corpus: set journal_mode: %w", err)
+			}
 		} else if mode != "delete" {
 			fmt.Fprintf(os.Stderr, "corpus: journal_mode is %q (another WAL connection active); will retry on next open\n", mode)
 		}
@@ -151,6 +155,16 @@ func (c *Corpus) Close() error {
 	}
 
 	return c.db.Close()
+}
+
+// isSQLiteBusy returns true if the error is SQLITE_BUSY or SQLITE_LOCKED.
+func isSQLiteBusy(err error) bool {
+	var sqlErr *sqlite.Error
+	if errors.As(err, &sqlErr) {
+		code := sqlErr.Code()
+		return code == 5 || code == 6 // SQLITE_BUSY, SQLITE_LOCKED
+	}
+	return false
 }
 
 // DB returns the underlying database connection for use by write/lookup operations.
