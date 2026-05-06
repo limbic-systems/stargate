@@ -370,23 +370,8 @@ listen = "127.0.0.1:9099"
 	if cfg.Latitude.Enabled {
 		t.Error("latitude should be disabled by default")
 	}
-}
-
-func TestLatitudeValidation_MissingProjectSlug(t *testing.T) {
-	path := writeConfig(t, `
-[server]
-listen = "127.0.0.1:9099"
-
-[latitude]
-enabled = true
-project_slug = ""
-`)
-	_, err := config.Load(path)
-	if err == nil {
-		t.Fatal("expected validation error for missing project_slug")
-	}
-	if !strings.Contains(err.Error(), "project_slug") {
-		t.Errorf("error should mention project_slug: %v", err)
+	if cfg.Latitude.ProjectSlug != "stargate" {
+		t.Errorf("project_slug = %q, want %q", cfg.Latitude.ProjectSlug, "stargate")
 	}
 }
 

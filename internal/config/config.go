@@ -444,6 +444,9 @@ func applyDefaults(cfg *Config) {
 	if cfg.Corpus.CommandCacheMaxEntries == 0 {
 		cfg.Corpus.CommandCacheMaxEntries = 10000
 	}
+	if cfg.Latitude.ProjectSlug == "" {
+		cfg.Latitude.ProjectSlug = "stargate"
+	}
 	if cfg.Latitude.CaptureName == "" {
 		cfg.Latitude.CaptureName = "stargate-classify"
 	}
@@ -714,9 +717,6 @@ func (cfg *Config) Validate() error {
 
 	// --- Latitude ---
 	if cfg.Latitude.Enabled {
-		if cfg.Latitude.ProjectSlug == "" {
-			return fmt.Errorf("config: latitude.project_slug is required when latitude is enabled")
-		}
 		if cfg.Latitude.Endpoint == "" {
 			return fmt.Errorf("config: latitude.endpoint is required when latitude is enabled")
 		}

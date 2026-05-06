@@ -602,7 +602,7 @@ reason = "Opens URLs or files with default handlers — could launch phishing pa
 
 # [latitude]
 # enabled = false
-# project_slug = ""
+# project_slug = "stargate"
 # capture_name = "stargate-classify"
 # endpoint = "https://ingest.latitude.so/v1/traces"
 # tags = []

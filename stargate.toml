@@ -780,7 +780,7 @@ service_name = "stargate"
 
 # [latitude]
 # enabled = false
-# project_slug = ""
+# project_slug = "stargate"
 # capture_name = "stargate-classify"
 # endpoint = "https://ingest.latitude.so/v1/traces"
 # tags = []
