@@ -796,7 +796,22 @@ func (c *Classifier) reviewWithLLM(state *classifyState) *LLMReviewResult {
 		Temperature:  c.llmCfg.Temperature,
 	}
 
-	llmResp, err := c.llmProvider.Review(state.ctx, llmReq)
+	llmCtx, llmSpan := c.tel.StartLLMSpan(state.ctx, telemetry.LLMSpanConfig{
+		Model:        llmReq.Model,
+		Temperature:  llmReq.Temperature,
+		MaxTokens:    llmReq.MaxTokens,
+		SystemPrompt: llmReq.SystemPrompt,
+		UserContent:  llmReq.UserContent,
+	})
+	llmResp, err := c.llmProvider.Review(llmCtx, llmReq)
+	c.tel.EndLLMSpan(llmSpan, telemetry.LLMSpanResult{
+		ResponseModel: llmResp.ResponseModel,
+		ResponseID:    llmResp.ResponseID,
+		OutputText:    llmResp.RawBody,
+		FinishReason:  llmResp.FinishReason,
+		InputTokens:   llmResp.InputTokens,
+		OutputTokens:  llmResp.OutputTokens,
+	}, err)
 	if state.debug != nil && llmResp.RawBody != "" {
 		state.debug.LLMRawResponse = llmResp.RawBody
 	}
@@ -865,7 +880,22 @@ func (c *Classifier) reviewWithLLM(state *classifyState) *LLMReviewResult {
 	llmReq.UserContent = userContent2
 
 	// Second LLM call.
-	llmResp2, err := c.llmProvider.Review(state.ctx, llmReq)
+	llmCtx2, llmSpan2 := c.tel.StartLLMSpan(state.ctx, telemetry.LLMSpanConfig{
+		Model:        llmReq.Model,
+		Temperature:  llmReq.Temperature,
+		MaxTokens:    llmReq.MaxTokens,
+		SystemPrompt: llmReq.SystemPrompt,
+		UserContent:  llmReq.UserContent,
+	})
+	llmResp2, err := c.llmProvider.Review(llmCtx2, llmReq)
+	c.tel.EndLLMSpan(llmSpan2, telemetry.LLMSpanResult{
+		ResponseModel: llmResp2.ResponseModel,
+		ResponseID:    llmResp2.ResponseID,
+		OutputText:    llmResp2.RawBody,
+		FinishReason:  llmResp2.FinishReason,
+		InputTokens:   llmResp2.InputTokens,
+		OutputTokens:  llmResp2.OutputTokens,
+	}, err)
 	if state.debug != nil {
 		state.debug.RenderedPrompts = &PromptDebug{
 			System: systemPrompt2,

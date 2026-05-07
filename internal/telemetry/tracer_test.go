@@ -321,6 +321,167 @@ func TestClassifySpan_SessionID(t *testing.T) {
 	assertAttrStr(t, spans[0].Attributes, "session.id", "sess-abc")
 }
 
+func TestStartLLMSpan_GenAIAttributes(t *testing.T) {
+	lt, exporter := newLatitudeTracer(t, "stargate-classify", "")
+
+	ctx, classifySpan := lt.StartClassifySpan(context.Background())
+
+	cfg := LLMSpanConfig{
+		Model:        "claude-sonnet-4-6",
+		Temperature:  0.0,
+		MaxTokens:    1024,
+		SystemPrompt: "You are a security classifier.",
+		UserContent:  "Classify: rm -rf /",
+	}
+	_, llmSpan := lt.StartLLMSpan(ctx, cfg)
+	lt.EndLLMSpan(llmSpan, LLMSpanResult{
+		ResponseModel: "claude-sonnet-4-6-20250514",
+		ResponseID:    "msg_abc123",
+		OutputText:    `{"decision":"deny","reasoning":"destructive"}`,
+		FinishReason:  "end_turn",
+		InputTokens:   150,
+		OutputTokens:  42,
+	}, nil)
+	classifySpan.End()
+
+	spans := exporter.GetSpans()
+	if len(spans) != 2 {
+		t.Fatalf("span count: got %d, want 2", len(spans))
+	}
+
+	var llmStub *tracetest.SpanStub
+	for i := range spans {
+		if spans[i].Name == "chat claude-sonnet-4-6" {
+			llmStub = &spans[i]
+			break
+		}
+	}
+	if llmStub == nil {
+		t.Fatal("LLM span not found")
+	}
+
+	// Verify span kind is CLIENT.
+	if llmStub.SpanKind != trace.SpanKindClient {
+		t.Errorf("span kind: got %v, want CLIENT", llmStub.SpanKind)
+	}
+
+	// Verify it's a child of the classify span.
+	classifySC := classifySpan.SpanContext()
+	if llmStub.Parent.SpanID() != classifySC.SpanID() {
+		t.Errorf("parent span ID: got %s, want %s", llmStub.Parent.SpanID(), classifySC.SpanID())
+	}
+
+	attrs := llmStub.Attributes
+
+	// Request-side attributes.
+	assertAttrStr(t, attrs, "gen_ai.operation.name", "chat")
+	assertAttrStr(t, attrs, "gen_ai.system", "anthropic")
+	assertAttrStr(t, attrs, "gen_ai.request.model", "claude-sonnet-4-6")
+	assertAttrFloat(t, attrs, "gen_ai.request.temperature", 0.0)
+	assertAttrInt(t, attrs, "gen_ai.request.max_tokens", 1024)
+
+	// Response-side attributes.
+	assertAttrStr(t, attrs, "gen_ai.response.model", "claude-sonnet-4-6-20250514")
+	assertAttrStr(t, attrs, "gen_ai.response.id", "msg_abc123")
+	assertAttrInt64(t, attrs, "gen_ai.usage.input_tokens", 150)
+	assertAttrInt64(t, attrs, "gen_ai.usage.output_tokens", 42)
+
+	// Latitude-gated content attributes (latitude is enabled).
+	assertAttrExists(t, attrs, "gen_ai.system_instructions")
+	assertAttrExists(t, attrs, "gen_ai.input.messages")
+	assertAttrExists(t, attrs, "gen_ai.output.messages")
+}
+
+func TestStartLLMSpan_NoLatitude_NoContentAttributes(t *testing.T) {
+	lt, exporter := newTestTracer(t)
+
+	ctx, classifySpan := lt.StartClassifySpan(context.Background())
+	_, llmSpan := lt.StartLLMSpan(ctx, LLMSpanConfig{
+		Model:        "claude-sonnet-4-6",
+		Temperature:  0.0,
+		MaxTokens:    1024,
+		SystemPrompt: "system",
+		UserContent:  "user",
+	})
+	lt.EndLLMSpan(llmSpan, LLMSpanResult{
+		ResponseModel: "claude-sonnet-4-6-20250514",
+		OutputText:    "output",
+		FinishReason:  "end_turn",
+		InputTokens:   10,
+		OutputTokens:  5,
+	}, nil)
+	classifySpan.End()
+
+	spans := exporter.GetSpans()
+	var llmStub *tracetest.SpanStub
+	for i := range spans {
+		if spans[i].Name == "chat claude-sonnet-4-6" {
+			llmStub = &spans[i]
+			break
+		}
+	}
+	if llmStub == nil {
+		t.Fatal("LLM span not found")
+	}
+
+	// GenAI request/response attributes should still be present.
+	assertAttrStr(t, llmStub.Attributes, "gen_ai.operation.name", "chat")
+	assertAttrStr(t, llmStub.Attributes, "gen_ai.response.model", "claude-sonnet-4-6-20250514")
+
+	// Content attributes should NOT be present when Latitude is disabled.
+	for _, attr := range llmStub.Attributes {
+		key := string(attr.Key)
+		if key == "gen_ai.system_instructions" || key == "gen_ai.input.messages" || key == "gen_ai.output.messages" {
+			t.Errorf("unexpected content attribute %q when latitude is disabled", key)
+		}
+	}
+}
+
+func TestEndLLMSpan_Error(t *testing.T) {
+	lt, exporter := newTestTracer(t)
+
+	ctx, classifySpan := lt.StartClassifySpan(context.Background())
+	_, llmSpan := lt.StartLLMSpan(ctx, LLMSpanConfig{
+		Model:     "claude-sonnet-4-6",
+		MaxTokens: 1024,
+	})
+	lt.EndLLMSpan(llmSpan, LLMSpanResult{}, errForTest)
+	classifySpan.End()
+
+	spans := exporter.GetSpans()
+	var llmStub *tracetest.SpanStub
+	for i := range spans {
+		if spans[i].Name == "chat claude-sonnet-4-6" {
+			llmStub = &spans[i]
+			break
+		}
+	}
+	if llmStub == nil {
+		t.Fatal("LLM span not found")
+	}
+
+	if llmStub.Status.Code != codes.Error {
+		t.Errorf("span status: got %v, want Error", llmStub.Status.Code)
+	}
+
+	// Error spans should not have response attributes.
+	for _, attr := range llmStub.Attributes {
+		key := string(attr.Key)
+		if key == "gen_ai.response.model" || key == "gen_ai.usage.input_tokens" {
+			t.Errorf("unexpected response attribute %q on error span", key)
+		}
+	}
+}
+
+func TestNoOpTelemetry_LLMSpan(t *testing.T) {
+	noop := &NoOpTelemetry{}
+	ctx, span := noop.StartLLMSpan(context.Background(), LLMSpanConfig{Model: "test"})
+	if ctx == nil {
+		t.Fatal("StartLLMSpan returned nil context")
+	}
+	noop.EndLLMSpan(span, LLMSpanResult{}, nil)
+}
+
 func assertAttrStr(t *testing.T, attrs []attribute.KeyValue, key, want string) {
 	t.Helper()
 	for _, attr := range attrs {
@@ -328,6 +489,55 @@ func assertAttrStr(t *testing.T, attrs []attribute.KeyValue, key, want string) {
 			if got := attr.Value.AsString(); got != want {
 				t.Errorf("attribute %q: got %q, want %q", key, got, want)
 			}
+			return
+		}
+	}
+	t.Errorf("attribute %q not found", key)
+}
+
+func assertAttrFloat(t *testing.T, attrs []attribute.KeyValue, key string, want float64) {
+	t.Helper()
+	for _, attr := range attrs {
+		if string(attr.Key) == key {
+			if got := attr.Value.AsFloat64(); got != want {
+				t.Errorf("attribute %q: got %f, want %f", key, got, want)
+			}
+			return
+		}
+	}
+	t.Errorf("attribute %q not found", key)
+}
+
+func assertAttrInt(t *testing.T, attrs []attribute.KeyValue, key string, want int) {
+	t.Helper()
+	for _, attr := range attrs {
+		if string(attr.Key) == key {
+			if got := attr.Value.AsInt64(); got != int64(want) {
+				t.Errorf("attribute %q: got %d, want %d", key, got, want)
+			}
+			return
+		}
+	}
+	t.Errorf("attribute %q not found", key)
+}
+
+func assertAttrInt64(t *testing.T, attrs []attribute.KeyValue, key string, want int64) {
+	t.Helper()
+	for _, attr := range attrs {
+		if string(attr.Key) == key {
+			if got := attr.Value.AsInt64(); got != want {
+				t.Errorf("attribute %q: got %d, want %d", key, got, want)
+			}
+			return
+		}
+	}
+	t.Errorf("attribute %q not found", key)
+}
+
+func assertAttrExists(t *testing.T, attrs []attribute.KeyValue, key string) {
+	t.Helper()
+	for _, attr := range attrs {
+		if string(attr.Key) == key {
 			return
 		}
 	}

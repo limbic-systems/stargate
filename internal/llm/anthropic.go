@@ -94,6 +94,11 @@ func (p *AnthropicProvider) reviewSDK(ctx context.Context, req ReviewRequest) (R
 
 	parsed, err := parseResponse(text)
 	parsed.RawBody = text
+	parsed.ResponseModel = resp.Model
+	parsed.ResponseID = resp.ID
+	parsed.FinishReason = string(resp.StopReason)
+	parsed.InputTokens = resp.Usage.InputTokens
+	parsed.OutputTokens = resp.Usage.OutputTokens
 	return parsed, err
 }
 

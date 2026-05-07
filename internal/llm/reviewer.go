@@ -30,6 +30,14 @@ type ReviewResponse struct {
 	RiskFactors  []string // Concerns identified by the LLM
 	RequestFiles []string // Non-empty = file request, not a verdict
 	RawBody      string   // raw LLM output text (concatenated text blocks / subprocess stdout) for debug
+
+	// Fields populated from the Anthropic API response for OTel GenAI spans.
+	// Subprocess path leaves these zero-valued (no structured API response).
+	ResponseModel string // model that generated the response (e.g. "claude-sonnet-4-6-20250514")
+	ResponseID    string // provider-assigned message ID
+	FinishReason  string // stop reason (e.g. "end_turn", "max_tokens")
+	InputTokens   int64  // prompt token count
+	OutputTokens  int64  // completion token count
 }
 
 // ReviewerProvider is the interface for LLM classification providers.
