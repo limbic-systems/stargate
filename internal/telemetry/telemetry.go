@@ -24,6 +24,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 	nooptrace "go.opentelemetry.io/otel/trace/noop"
 
@@ -58,6 +59,13 @@ type Telemetry interface {
 	// LookupToolUseTrace returns the stargate_trace_id for a tool_use_id,
 	// or empty string if not found (caller falls back to trace file).
 	LookupToolUseTrace(toolUseID string) string
+	// StartLLMSpan creates a child span with GenAI semantic convention
+	// attributes for an LLM inference call. The span name follows the
+	// convention "chat {model}".
+	StartLLMSpan(ctx context.Context, cfg LLMSpanConfig) (context.Context, trace.Span)
+	// EndLLMSpan sets response-side GenAI attributes and ends the span.
+	// If err is non-nil the span is marked with an error status.
+	EndLLMSpan(span trace.Span, result LLMSpanResult, err error)
 }
 
 // ClassifyResult holds the data needed for telemetry logging and metrics.
@@ -76,6 +84,25 @@ type ClassifyResult struct {
 	SessionID        string
 	ScrubCommand     string // post-scrubbing command (may be empty)
 	RequestCWD       string // per-request CWD from ClassifyRequest
+}
+
+// LLMSpanConfig holds request-side data for GenAI span attributes.
+type LLMSpanConfig struct {
+	Model        string
+	Temperature  float64
+	MaxTokens    int
+	SystemPrompt string
+	UserContent  string
+}
+
+// LLMSpanResult holds response-side data for GenAI span attributes.
+type LLMSpanResult struct {
+	ResponseModel string
+	ResponseID    string
+	OutputText    string
+	FinishReason  string
+	InputTokens   int64
+	OutputTokens  int64
 }
 
 // --- NoOpTelemetry ---
@@ -112,6 +139,12 @@ func (n *NoOpTelemetry) StartSpan(ctx context.Context, _ string) (context.Contex
 func (n *NoOpTelemetry) StartFeedbackSpan(ctx context.Context, _ string) (context.Context, trace.Span) {
 	return ctx, nooptrace.Span{}
 }
+
+func (n *NoOpTelemetry) StartLLMSpan(ctx context.Context, _ LLMSpanConfig) (context.Context, trace.Span) {
+	return ctx, nooptrace.Span{}
+}
+
+func (n *NoOpTelemetry) EndLLMSpan(_ trace.Span, _ LLMSpanResult, _ error) {}
 
 // --- LiveTelemetry ---
 
@@ -384,6 +417,83 @@ func (lt *LiveTelemetry) LookupToolUseTrace(toolUseID string) string {
 		}
 	}
 	return ""
+}
+
+// StartLLMSpan creates a child span following the OpenTelemetry GenAI
+// semantic conventions (https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-spans/).
+// Request-side attributes are set immediately; response-side attributes
+// are set via EndLLMSpan after the provider returns.
+func (lt *LiveTelemetry) StartLLMSpan(ctx context.Context, cfg LLMSpanConfig) (context.Context, trace.Span) {
+	spanName := "chat " + cfg.Model
+	ctx, span := lt.tracer.Start(ctx, spanName, trace.WithSpanKind(trace.SpanKindClient))
+
+	span.SetAttributes(
+		attribute.String("gen_ai.operation.name", "chat"),
+		attribute.String("gen_ai.system", "anthropic"),
+		attribute.String("gen_ai.request.model", cfg.Model),
+		attribute.Float64("gen_ai.request.temperature", cfg.Temperature),
+		attribute.Int("gen_ai.request.max_tokens", cfg.MaxTokens),
+	)
+
+	if lt.latitudeEnabled {
+		sysJSON, _ := json.Marshal([]map[string]string{
+			{"type": "text", "content": cfg.SystemPrompt},
+		})
+		span.SetAttributes(attribute.String("gen_ai.system_instructions", string(sysJSON)))
+
+		inputJSON, _ := json.Marshal([]map[string]any{
+			{
+				"role": "user",
+				"parts": []map[string]string{
+					{"type": "text", "content": cfg.UserContent},
+				},
+			},
+		})
+		span.SetAttributes(attribute.String("gen_ai.input.messages", string(inputJSON)))
+	}
+
+	return ctx, span
+}
+
+// EndLLMSpan sets response-side GenAI attributes and ends the span.
+func (lt *LiveTelemetry) EndLLMSpan(span trace.Span, result LLMSpanResult, err error) {
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		span.End()
+		return
+	}
+
+	responseModel := result.ResponseModel
+	if responseModel == "" {
+		responseModel = "unknown"
+	}
+
+	span.SetAttributes(
+		attribute.String("gen_ai.response.model", responseModel),
+		attribute.Int64("gen_ai.usage.input_tokens", result.InputTokens),
+		attribute.Int64("gen_ai.usage.output_tokens", result.OutputTokens),
+	)
+
+	if result.ResponseID != "" {
+		span.SetAttributes(attribute.String("gen_ai.response.id", result.ResponseID))
+	}
+	if result.FinishReason != "" {
+		span.SetAttributes(attribute.StringSlice("gen_ai.response.finish_reasons", []string{result.FinishReason}))
+	}
+
+	if lt.latitudeEnabled && result.OutputText != "" {
+		outputJSON, _ := json.Marshal([]map[string]any{
+			{
+				"role":          "assistant",
+				"parts":         []map[string]string{{"type": "text", "content": result.OutputText}},
+				"finish_reason": result.FinishReason,
+			},
+		})
+		span.SetAttributes(attribute.String("gen_ai.output.messages", string(outputJSON)))
+	}
+
+	span.End()
 }
 
 // exportOpts groups exporter options by signal type.
